@@ -6,6 +6,7 @@
 % Current content
 % ---------------
 % Step 1 - Data acquisition and initial inspection.
+% Step 2 - Exploratory data analysis (tables printed, figures saved).
 %
 % How to run
 % ----------
@@ -39,3 +40,13 @@ concrete_inspection_report = L.inspect_concrete_dataset(concrete_dataset);
 melbourne_dataset = L.load_melbourne_dataset(melbourne_file_path);
 melbourne_inspection_report = L.inspect_melbourne_dataset(melbourne_dataset);
 
+
+%% ========================================================================
+%  STEP 2 - EXPLORATORY DATA ANALYSIS
+%  ========================================================================
+
+% Figures are shown on screen and saved as PNG files in this folder.
+figures_folder = fullfile(data_folder, 'figures');
+
+concrete_eda_report  = L.explore_concrete_dataset(concrete_dataset, figures_folder);
+melbourne_eda_report = L.explore_melbourne_dataset(melbourne_dataset, figures_folder);
