@@ -16,71 +16,102 @@ function L = ann_lib()
     %
     % Contents
     % --------
-    % Step 1 - data acquisition and initial inspection
-    %   Data loading     : load_concrete_dataset, load_melbourne_dataset
-    %   Inspection       : inspect_concrete_dataset, inspect_melbourne_dataset
-    %   Statistics       : compute_column_summary, compute_percentile
-    %   Printing helpers : print_column_summary, print_section_title
-    %
-    % Step 2 - exploratory data analysis
-    %   Entry points     : explore_concrete_dataset, explore_melbourne_dataset
-    %   Statistics       : correlations, autocorrelation (ACF), partial
-    %                      autocorrelation (PACF), annual harmonic fit,
-    %                      daily climatology
-    %   Plots            : plot_concrete_*, plot_melbourne_*, draw_box_plot
+    % The functions below are grouped by assignment step and, inside each
+    % step, by dataset: CONCRETE (only Concrete), MELBOURNE (only
+    % Melbourne) and UTILS (both datasets, or helpers reused later).
+    % The handles are listed in the same order.
 
-    L.load_concrete_dataset     = @load_concrete_dataset;
-    L.load_melbourne_dataset    = @load_melbourne_dataset;
+    % ======================================================================
+    % STEP 1 - DATA ACQUISITION AND INITIAL INSPECTION
+    % ======================================================================
 
-    L.inspect_concrete_dataset  = @inspect_concrete_dataset;
-    L.inspect_melbourne_dataset = @inspect_melbourne_dataset;
+    % ---- CONCRETE --------------------------------------------------------
+    L.load_concrete_dataset    = @load_concrete_dataset;
+    L.inspect_concrete_dataset = @inspect_concrete_dataset;
 
-    L.compute_column_summary    = @compute_column_summary;
-    L.compute_percentile        = @compute_percentile;
+    % ---- MELBOURNE -------------------------------------------------------
+    L.load_melbourne_dataset     = @load_melbourne_dataset;
+    L.inspect_melbourne_dataset  = @inspect_melbourne_dataset;
+    L.find_missing_calendar_days = @find_missing_calendar_days;
 
-    L.print_column_summary      = @print_column_summary;
-    L.print_section_title       = @print_section_title;
+    % ---- UTILS -----------------------------------------------------------
+    L.compute_column_summary = @compute_column_summary;
+    L.compute_percentile     = @compute_percentile;
+    L.print_column_summary   = @print_column_summary;
+    L.print_section_title    = @print_section_title;
 
-    % ---- Step 2: exploratory data analysis -------------------------------
-    L.explore_concrete_dataset   = @explore_concrete_dataset;
-    L.explore_melbourne_dataset  = @explore_melbourne_dataset;
+    % ======================================================================
+    % STEP 2 - EXPLORATORY DATA ANALYSIS
+    % ======================================================================
 
-    L.compute_pearson_correlation          = @compute_pearson_correlation;
-    L.compute_correlation_matrix           = @compute_correlation_matrix;
-    L.compute_average_ranks                = @compute_average_ranks;
-    L.compute_spearman_correlation_matrix  = @compute_spearman_correlation_matrix;
-    L.compute_autocorrelation_function     = @compute_autocorrelation_function;
+    % ---- CONCRETE --------------------------------------------------------
+    L.explore_concrete_dataset            = @explore_concrete_dataset;
+    L.plot_concrete_histograms            = @plot_concrete_histograms;
+    L.plot_concrete_correlation_matrix    = @plot_concrete_correlation_matrix;
+    L.plot_concrete_scatter_plots         = @plot_concrete_scatter_plots;
+    L.compute_correlation_matrix          = @compute_correlation_matrix;
+    L.compute_average_ranks               = @compute_average_ranks;
+    L.compute_spearman_correlation_matrix = @compute_spearman_correlation_matrix;
+    L.print_correlation_matrix            = @print_correlation_matrix;
+    L.build_blue_white_red_colormap       = @build_blue_white_red_colormap;
+
+    % ---- MELBOURNE -------------------------------------------------------
+    L.explore_melbourne_dataset                = @explore_melbourne_dataset;
+    L.plot_melbourne_series                    = @plot_melbourne_series;
+    L.plot_melbourne_distribution              = @plot_melbourne_distribution;
+    L.plot_melbourne_monthly_box_plots         = @plot_melbourne_monthly_box_plots;
+    L.plot_melbourne_annual_cycle              = @plot_melbourne_annual_cycle;
+    L.plot_melbourne_autocorrelation           = @plot_melbourne_autocorrelation;
+    L.plot_melbourne_lag_scatter               = @plot_melbourne_lag_scatter;
+    L.plot_melbourne_abrupt_changes            = @plot_melbourne_abrupt_changes;
+    L.compute_autocorrelation_function         = @compute_autocorrelation_function;
     L.compute_partial_autocorrelation_function = @compute_partial_autocorrelation_function;
+    L.compute_day_of_year                      = @compute_day_of_year;
+    L.fit_annual_harmonic                      = @fit_annual_harmonic;
+    L.compute_daily_climatology                = @compute_daily_climatology;
+    L.circular_moving_average                  = @circular_moving_average;
+    L.compute_longest_constant_run             = @compute_longest_constant_run;
+    L.draw_correlation_stems                   = @draw_correlation_stems;
 
-    L.compute_day_of_year            = @compute_day_of_year;
-    L.find_missing_calendar_days     = @find_missing_calendar_days;
-    L.fit_annual_harmonic            = @fit_annual_harmonic;
-    L.compute_daily_climatology      = @compute_daily_climatology;
-    L.circular_moving_average        = @circular_moving_average;
-    L.compute_longest_constant_run   = @compute_longest_constant_run;
+    % ---- UTILS -----------------------------------------------------------
+    L.compute_pearson_correlation = @compute_pearson_correlation;
+    L.draw_box_plot               = @draw_box_plot;
+    L.save_figure                 = @save_figure;
+    L.ensure_folder_exists        = @ensure_folder_exists;
 
-    L.plot_concrete_histograms          = @plot_concrete_histograms;
-    L.plot_concrete_correlation_matrix  = @plot_concrete_correlation_matrix;
-    L.plot_concrete_scatter_plots       = @plot_concrete_scatter_plots;
-    L.plot_melbourne_series             = @plot_melbourne_series;
-    L.plot_melbourne_distribution       = @plot_melbourne_distribution;
-    L.plot_melbourne_monthly_box_plots  = @plot_melbourne_monthly_box_plots;
-    L.plot_melbourne_annual_cycle       = @plot_melbourne_annual_cycle;
-    L.plot_melbourne_autocorrelation    = @plot_melbourne_autocorrelation;
-    L.plot_melbourne_lag_scatter        = @plot_melbourne_lag_scatter;
-    L.plot_melbourne_abrupt_changes     = @plot_melbourne_abrupt_changes;
+    % ======================================================================
+    % STEP 3 - PREPROCESSING AND FEATURE ENGINEERING
+    % ======================================================================
 
-    L.draw_box_plot                  = @draw_box_plot;
-    L.draw_correlation_stems         = @draw_correlation_stems;
-    L.save_figure                    = @save_figure;
-    L.ensure_folder_exists           = @ensure_folder_exists;
-    L.print_correlation_matrix       = @print_correlation_matrix;
-    L.build_blue_white_red_colormap  = @build_blue_white_red_colormap;
+    % ---- CONCRETE --------------------------------------------------------
+    L.preprocess_concrete_dataset = @preprocess_concrete_dataset;
+    L.remove_exact_duplicate_rows = @remove_exact_duplicate_rows;
+    L.build_concrete_features     = @build_concrete_features;
+
+    % ---- MELBOURNE -------------------------------------------------------
+    L.preprocess_melbourne_dataset              = @preprocess_melbourne_dataset;
+    L.fill_missing_days_by_linear_interpolation = @fill_missing_days_by_linear_interpolation;
+    L.build_melbourne_windows                   = @build_melbourne_windows;
+    L.compute_calendar_features                 = @compute_calendar_features;
+    L.compare_window_lengths_with_linear_model  = @compare_window_lengths_with_linear_model;
+    L.compute_chronological_split_cutoffs       = @compute_chronological_split_cutoffs;
+    L.assign_samples_to_chronological_blocks    = @assign_samples_to_chronological_blocks;
+
+    % ---- UTILS -----------------------------------------------------------
+    L.fit_standardization             = @fit_standardization;
+    L.apply_standardization           = @apply_standardization;
+    L.invert_standardization          = @invert_standardization;
+    L.fit_linear_least_squares        = @fit_linear_least_squares;
+    L.predict_linear_model            = @predict_linear_model;
+    L.compute_root_mean_squared_error = @compute_root_mean_squared_error;
+    L.count_network_parameters        = @count_network_parameters;
+    L.print_network_sizes             = @print_network_sizes;
 end
 
 
 %% ========================================================================
-%  DATA LOADING
+%  STEP 1 - DATA ACQUISITION AND INITIAL INSPECTION: CONCRETE
+%  Functions used only by the Concrete dataset.
 %  ========================================================================
 
 function dataset = load_concrete_dataset(file_path)
@@ -206,122 +237,6 @@ function numeric_table = read_numeric_csv_with_header(file_path)
 end
 
 
-function dataset = load_melbourne_dataset(file_path)
-    % Load the Daily Minimum Temperatures in Melbourne dataset (Kaggle).
-    %
-    % The file has a header row, one line per day in the form
-    %     "1981-01-01",20.7
-    % and a text footer. Only lines that start with a quoted date are data.
-    %
-    % Known defect of this file
-    % -------------------------
-    % Three negative values were saved with a "?" instead of the minus
-    % sign (e.g. "?0.2" instead of "-0.2"). They are repaired while
-    % reading and reported in repaired_dates / repaired_original_texts, so
-    % nothing is changed silently. All three fall in July (winter), where
-    % values close to 0 degC are expected, which supports the repair.
-    %
-    % Parameters
-    % ----------
-    % file_path : char
-    %     Path to daily-minimum-temperatures-in-me.csv.
-    %
-    % Returns
-    % -------
-    % dataset : struct
-    %     dates                  : N x 1 double, MATLAB serial date numbers
-    %     temperature_celsius    : N x 1 double, minimum temperature (degC)
-    %     variable_names         : 1 x 2 cell of char
-    %     variable_units         : 1 x 2 cell of char
-    %     repaired_dates         : R x 1 double, dates of repaired values
-    %     repaired_original_texts: R x 1 cell of char, text before repair
-
-    if ~exist(file_path, 'file')
-        error('load_melbourne_dataset:fileNotFound', ...
-              'File not found: %s', file_path);
-    end
-
-    file_id = fopen(file_path, 'r');
-
-    if file_id == -1
-        error('load_melbourne_dataset:cannotOpen', ...
-              'Could not open file: %s', file_path);
-    end
-
-    maximum_number_of_rows = 5000;   % safe upper bound (file has 3650 days)
-    dates               = zeros(maximum_number_of_rows, 1);
-    temperature_celsius = zeros(maximum_number_of_rows, 1);
-
-    number_of_observations  = 0;
-    line_number             = 0;
-    repaired_dates          = [];
-    repaired_original_texts = {};
-
-    % Pattern: "YYYY-MM-DD",<value>   (value = any run of non-blank chars)
-    data_line_pattern = '^"(\d{4})-(\d{2})-(\d{2})",\s*(\S+)';
-
-    current_line = fgetl(file_id);
-
-    while ischar(current_line)
-        line_number = line_number + 1;
-
-        tokens = regexp(current_line, data_line_pattern, 'tokens', 'once');
-
-        % Header, blank lines and footer do not match and are ignored.
-        if ~isempty(tokens)
-
-            year_number  = str2double(tokens{1});
-            month_number = str2double(tokens{2});
-            day_number   = str2double(tokens{3});
-            value_text   = tokens{4};
-
-            value_starts_with_bad_character = ~isempty(regexp(value_text, '^[^0-9.+\-]', 'once'));
-
-            if value_starts_with_bad_character
-                original_value_text = value_text;
-                value_text = regexprep(value_text, '^[^0-9.+\-]+', '-');
-            end
-
-            temperature_value = str2double(value_text);
-
-            if isnan(temperature_value)
-                fclose(file_id);
-                error('load_melbourne_dataset:invalidValue', ...
-                      'Line %d: could not read a number from "%s".', ...
-                      line_number, tokens{4});
-            end
-
-            number_of_observations = number_of_observations + 1;
-
-            dates(number_of_observations) = datenum(year_number, month_number, day_number);
-            temperature_celsius(number_of_observations) = temperature_value;
-
-            if value_starts_with_bad_character
-                repaired_dates(end + 1, 1) = dates(number_of_observations);
-                repaired_original_texts{end + 1, 1} = original_value_text;
-            end
-        end
-
-        current_line = fgetl(file_id);
-    end
-
-    fclose(file_id);
-
-    dataset.dates               = dates(1:number_of_observations);
-    dataset.temperature_celsius = temperature_celsius(1:number_of_observations);
-
-    dataset.variable_names = {'Date', 'Minimum temperature'};
-    dataset.variable_units = {'day', 'degC'};
-
-    dataset.repaired_dates          = repaired_dates;
-    dataset.repaired_original_texts = repaired_original_texts;
-end
-
-
-%% ========================================================================
-%  DATASET INSPECTION
-%  ========================================================================
-
 function inspection_report = inspect_concrete_dataset(dataset)
     % Print and return the initial inspection of the Concrete dataset.
     %
@@ -432,6 +347,123 @@ function inspection_report = inspect_concrete_dataset(dataset)
     inspection_report.number_of_rows_in_repeated_mixtures = number_of_rows_in_repeated_mixtures;
     inspection_report.distinct_ages_in_days  = distinct_ages_in_days;
     inspection_report.number_of_rows_per_age = number_of_rows_per_age;
+end
+
+
+%% ========================================================================
+%  STEP 1 - DATA ACQUISITION AND INITIAL INSPECTION: MELBOURNE
+%  Functions used only by the Melbourne dataset.
+%  ========================================================================
+
+function dataset = load_melbourne_dataset(file_path)
+    % Load the Daily Minimum Temperatures in Melbourne dataset (Kaggle).
+    %
+    % The file has a header row, one line per day in the form
+    %     "1981-01-01",20.7
+    % and a text footer. Only lines that start with a quoted date are data.
+    %
+    % Known defect of this file
+    % -------------------------
+    % Three negative values were saved with a "?" instead of the minus
+    % sign (e.g. "?0.2" instead of "-0.2"). They are repaired while
+    % reading and reported in repaired_dates / repaired_original_texts, so
+    % nothing is changed silently. All three fall in July (winter), where
+    % values close to 0 degC are expected, which supports the repair.
+    %
+    % Parameters
+    % ----------
+    % file_path : char
+    %     Path to daily-minimum-temperatures-in-me.csv.
+    %
+    % Returns
+    % -------
+    % dataset : struct
+    %     dates                  : N x 1 double, MATLAB serial date numbers
+    %     temperature_celsius    : N x 1 double, minimum temperature (degC)
+    %     variable_names         : 1 x 2 cell of char
+    %     variable_units         : 1 x 2 cell of char
+    %     repaired_dates         : R x 1 double, dates of repaired values
+    %     repaired_original_texts: R x 1 cell of char, text before repair
+
+    if ~exist(file_path, 'file')
+        error('load_melbourne_dataset:fileNotFound', ...
+              'File not found: %s', file_path);
+    end
+
+    file_id = fopen(file_path, 'r');
+
+    if file_id == -1
+        error('load_melbourne_dataset:cannotOpen', ...
+              'Could not open file: %s', file_path);
+    end
+
+    maximum_number_of_rows = 5000;   % safe upper bound (file has 3650 days)
+    dates               = zeros(maximum_number_of_rows, 1);
+    temperature_celsius = zeros(maximum_number_of_rows, 1);
+
+    number_of_observations  = 0;
+    line_number             = 0;
+    repaired_dates          = [];
+    repaired_original_texts = {};
+
+    % Pattern: "YYYY-MM-DD",<value>   (value = any run of non-blank chars)
+    data_line_pattern = '^"(\d{4})-(\d{2})-(\d{2})",\s*(\S+)';
+
+    current_line = fgetl(file_id);
+
+    while ischar(current_line)
+        line_number = line_number + 1;
+
+        tokens = regexp(current_line, data_line_pattern, 'tokens', 'once');
+
+        % Header, blank lines and footer do not match and are ignored.
+        if ~isempty(tokens)
+
+            year_number  = str2double(tokens{1});
+            month_number = str2double(tokens{2});
+            day_number   = str2double(tokens{3});
+            value_text   = tokens{4};
+
+            value_starts_with_bad_character = ~isempty(regexp(value_text, '^[^0-9.+\-]', 'once'));
+
+            if value_starts_with_bad_character
+                original_value_text = value_text;
+                value_text = regexprep(value_text, '^[^0-9.+\-]+', '-');
+            end
+
+            temperature_value = str2double(value_text);
+
+            if isnan(temperature_value)
+                fclose(file_id);
+                error('load_melbourne_dataset:invalidValue', ...
+                      'Line %d: could not read a number from "%s".', ...
+                      line_number, tokens{4});
+            end
+
+            number_of_observations = number_of_observations + 1;
+
+            dates(number_of_observations) = datenum(year_number, month_number, day_number);
+            temperature_celsius(number_of_observations) = temperature_value;
+
+            if value_starts_with_bad_character
+                repaired_dates(end + 1, 1) = dates(number_of_observations);
+                repaired_original_texts{end + 1, 1} = original_value_text;
+            end
+        end
+
+        current_line = fgetl(file_id);
+    end
+
+    fclose(file_id);
+
+    dataset.dates               = dates(1:number_of_observations);
+    dataset.temperature_celsius = temperature_celsius(1:number_of_observations);
+
+    dataset.variable_names = {'Date', 'Minimum temperature'};
+    dataset.variable_units = {'day', 'degC'};
+
+    dataset.repaired_dates          = repaired_dates;
+    dataset.repaired_original_texts = repaired_original_texts;
 end
 
 
@@ -572,8 +604,37 @@ function inspection_report = inspect_melbourne_dataset(dataset)
 end
 
 
+function missing_dates = find_missing_calendar_days(dates)
+    % Calendar days that are absent from a chronologically sorted date list.
+    %
+    % Parameters
+    % ----------
+    % dates : double column
+    %     Serial date numbers, sorted in ascending order.
+    %
+    % Returns
+    % -------
+    % missing_dates : double column
+    %     Serial date numbers of the absent days (empty if none).
+
+    days_between_rows = diff(dates);
+    index_before_each_gap = find(days_between_rows > 1);
+
+    missing_dates = [];
+
+    for gap_number = 1:numel(index_before_each_gap)
+        index_before_gap  = index_before_each_gap(gap_number);
+        first_missing_day = dates(index_before_gap) + 1;
+        last_missing_day  = dates(index_before_gap + 1) - 1;
+
+        missing_dates = [missing_dates; (first_missing_day:last_missing_day)'];
+    end
+end
+
+
 %% ========================================================================
-%  STATISTICS (implemented here: no Statistics Toolbox required)
+%  STEP 1 - DATA ACQUISITION AND INITIAL INSPECTION: UTILS
+%  Functions used by both datasets (or generic helpers reused in later steps).
 %  ========================================================================
 
 function column_summary = compute_column_summary(data_matrix)
@@ -686,10 +747,6 @@ function percentile_value = compute_percentile(sorted_values, probability)
 end
 
 
-%% ========================================================================
-%  PRINTING HELPERS
-%  ========================================================================
-
 function print_column_summary(variable_names, column_summary)
     % Print the output of compute_column_summary as two readable tables.
     %
@@ -744,6 +801,7 @@ end
 
 %% ========================================================================
 %  STEP 2 - EXPLORATORY DATA ANALYSIS: CONCRETE
+%  Functions used only by the Concrete dataset.
 %  ========================================================================
 
 function eda_report = explore_concrete_dataset(dataset, figures_folder)
@@ -997,8 +1055,144 @@ function figure_handle = plot_concrete_scatter_plots(dataset)
 end
 
 
+function correlation_matrix = compute_correlation_matrix(data_matrix)
+    % Pearson correlation matrix of the columns of a matrix.
+    %
+    % Parameters
+    % ----------
+    % data_matrix : double matrix, N x K
+    %     One variable per column (no NaN).
+    %
+    % Returns
+    % -------
+    % correlation_matrix : double matrix, K x K
+
+    number_of_rows = size(data_matrix, 1);
+
+    column_means  = mean(data_matrix, 1);
+    centered_data = data_matrix - repmat(column_means, number_of_rows, 1);
+
+    covariance_matrix  = (centered_data' * centered_data) / (number_of_rows - 1);
+    standard_deviation = sqrt(diag(covariance_matrix));
+
+    correlation_matrix = covariance_matrix ./ (standard_deviation * standard_deviation');
+end
+
+
+function ranks = compute_average_ranks(values)
+    % Ranks of a vector, giving tied values the average of their ranks.
+    %
+    % Parameters
+    % ----------
+    % values : double vector
+    %
+    % Returns
+    % -------
+    % ranks : double column, same length as values
+    %     1 for the smallest value. Example: [10 20 20 30] -> [1 2.5 2.5 4].
+
+    values = values(:);
+    number_of_values = numel(values);
+
+    [sorted_values, sort_order] = sort(values);
+
+    ranks_in_sorted_order = zeros(number_of_values, 1);
+
+    group_start = 1;
+
+    while group_start <= number_of_values
+        group_end = group_start;
+
+        while group_end < number_of_values && sorted_values(group_end + 1) == sorted_values(group_start)
+            group_end = group_end + 1;
+        end
+
+        ranks_in_sorted_order(group_start:group_end) = (group_start + group_end) / 2;
+        group_start = group_end + 1;
+    end
+
+    ranks = zeros(number_of_values, 1);
+    ranks(sort_order) = ranks_in_sorted_order;
+end
+
+
+function correlation_matrix = compute_spearman_correlation_matrix(data_matrix)
+    % Spearman (rank) correlation matrix of the columns of a matrix.
+    %
+    % It measures monotonic (not only linear) association, which is useful
+    % for variables such as the concrete age.
+    %
+    % Parameters
+    % ----------
+    % data_matrix : double matrix, N x K
+    %
+    % Returns
+    % -------
+    % correlation_matrix : double matrix, K x K
+
+    ranked_matrix = zeros(size(data_matrix));
+
+    for column_index = 1:size(data_matrix, 2)
+        ranked_matrix(:, column_index) = compute_average_ranks(data_matrix(:, column_index));
+    end
+
+    correlation_matrix = compute_correlation_matrix(ranked_matrix);
+end
+
+
+function print_correlation_matrix(short_names, correlation_matrix)
+    % Print a correlation matrix with row and column labels.
+    %
+    % Parameters
+    % ----------
+    % short_names : 1 x K cell of char
+    %     Labels of the variables (at most 5 characters each).
+    % correlation_matrix : double matrix, K x K
+
+    number_of_variables = numel(short_names);
+
+    fprintf('%-6s', '');
+    for column_index = 1:number_of_variables
+        fprintf('%6s', short_names{column_index});
+    end
+    fprintf('\n');
+
+    for row_index = 1:number_of_variables
+        fprintf('%-6s', short_names{row_index});
+        for column_index = 1:number_of_variables
+            fprintf('%6.2f', correlation_matrix(row_index, column_index));
+        end
+        fprintf('\n');
+    end
+end
+
+
+function color_map = build_blue_white_red_colormap(number_of_colors_per_half)
+    % Diverging colour map: blue (-1), white (0), red (+1).
+    %
+    % Parameters
+    % ----------
+    % number_of_colors_per_half : integer
+    %     Colours between blue and white (and between white and red).
+    %
+    % Returns
+    % -------
+    % color_map : double matrix, (2 * number_of_colors_per_half) x 3
+
+    ramp_up   = linspace(0, 1, number_of_colors_per_half)';
+    ramp_down = linspace(1, 0, number_of_colors_per_half)';
+    ones_column = ones(number_of_colors_per_half, 1);
+
+    blue_to_white = [ramp_up,      ramp_up,      ones_column];
+    white_to_red  = [ones_column,  ramp_down,    ramp_down];
+
+    color_map = [blue_to_white; white_to_red];
+end
+
+
 %% ========================================================================
 %  STEP 2 - EXPLORATORY DATA ANALYSIS: MELBOURNE
+%  Functions used only by the Melbourne dataset.
 %  ========================================================================
 
 function eda_report = explore_melbourne_dataset(dataset, figures_folder)
@@ -1519,113 +1713,6 @@ function figure_handle = plot_melbourne_abrupt_changes(dates, anomalies, ...
 end
 
 
-%% ========================================================================
-%  STEP 2 - STATISTICS
-%  ========================================================================
-
-function correlation = compute_pearson_correlation(first_values, second_values)
-    % Pearson correlation between two vectors.
-    %
-    % Parameters
-    % ----------
-    % first_values, second_values : double vectors of the same length
-    %
-    % Returns
-    % -------
-    % correlation : double in [-1, 1]
-
-    first_centered  = first_values(:)  - mean(first_values(:));
-    second_centered = second_values(:) - mean(second_values(:));
-
-    correlation = sum(first_centered .* second_centered) / sqrt(sum(first_centered .^ 2) * sum(second_centered .^ 2));
-end
-
-
-function correlation_matrix = compute_correlation_matrix(data_matrix)
-    % Pearson correlation matrix of the columns of a matrix.
-    %
-    % Parameters
-    % ----------
-    % data_matrix : double matrix, N x K
-    %     One variable per column (no NaN).
-    %
-    % Returns
-    % -------
-    % correlation_matrix : double matrix, K x K
-
-    number_of_rows = size(data_matrix, 1);
-
-    column_means  = mean(data_matrix, 1);
-    centered_data = data_matrix - repmat(column_means, number_of_rows, 1);
-
-    covariance_matrix  = (centered_data' * centered_data) / (number_of_rows - 1);
-    standard_deviation = sqrt(diag(covariance_matrix));
-
-    correlation_matrix = covariance_matrix ./ (standard_deviation * standard_deviation');
-end
-
-
-function ranks = compute_average_ranks(values)
-    % Ranks of a vector, giving tied values the average of their ranks.
-    %
-    % Parameters
-    % ----------
-    % values : double vector
-    %
-    % Returns
-    % -------
-    % ranks : double column, same length as values
-    %     1 for the smallest value. Example: [10 20 20 30] -> [1 2.5 2.5 4].
-
-    values = values(:);
-    number_of_values = numel(values);
-
-    [sorted_values, sort_order] = sort(values);
-
-    ranks_in_sorted_order = zeros(number_of_values, 1);
-
-    group_start = 1;
-
-    while group_start <= number_of_values
-        group_end = group_start;
-
-        while group_end < number_of_values && sorted_values(group_end + 1) == sorted_values(group_start)
-            group_end = group_end + 1;
-        end
-
-        ranks_in_sorted_order(group_start:group_end) = (group_start + group_end) / 2;
-        group_start = group_end + 1;
-    end
-
-    ranks = zeros(number_of_values, 1);
-    ranks(sort_order) = ranks_in_sorted_order;
-end
-
-
-function correlation_matrix = compute_spearman_correlation_matrix(data_matrix)
-    % Spearman (rank) correlation matrix of the columns of a matrix.
-    %
-    % It measures monotonic (not only linear) association, which is useful
-    % for variables such as the concrete age.
-    %
-    % Parameters
-    % ----------
-    % data_matrix : double matrix, N x K
-    %
-    % Returns
-    % -------
-    % correlation_matrix : double matrix, K x K
-
-    ranked_matrix = zeros(size(data_matrix));
-
-    for column_index = 1:size(data_matrix, 2)
-        ranked_matrix(:, column_index) = compute_average_ranks(data_matrix(:, column_index));
-    end
-
-    correlation_matrix = compute_correlation_matrix(ranked_matrix);
-end
-
-
 function autocorrelation = compute_autocorrelation_function(values, maximum_lag)
     % Sample autocorrelation function (ACF), implemented without toolbox.
     %
@@ -1723,34 +1810,6 @@ function day_of_year = compute_day_of_year(dates)
     first_day_of_each_year = datenum(date_vectors(:, 1), ones(number_of_dates, 1), ones(number_of_dates, 1));
 
     day_of_year = dates(:) - first_day_of_each_year + 1;
-end
-
-
-function missing_dates = find_missing_calendar_days(dates)
-    % Calendar days that are absent from a chronologically sorted date list.
-    %
-    % Parameters
-    % ----------
-    % dates : double column
-    %     Serial date numbers, sorted in ascending order.
-    %
-    % Returns
-    % -------
-    % missing_dates : double column
-    %     Serial date numbers of the absent days (empty if none).
-
-    days_between_rows = diff(dates);
-    index_before_each_gap = find(days_between_rows > 1);
-
-    missing_dates = [];
-
-    for gap_number = 1:numel(index_before_each_gap)
-        index_before_gap  = index_before_each_gap(gap_number);
-        first_missing_day = dates(index_before_gap) + 1;
-        last_missing_day  = dates(index_before_gap + 1) - 1;
-
-        missing_dates = [missing_dates; (first_missing_day:last_missing_day)'];
-    end
 end
 
 
@@ -1914,9 +1973,51 @@ function [longest_run_length, last_row_of_longest_run] = compute_longest_constan
 end
 
 
+function draw_correlation_stems(lags, correlation_values, confidence_bound)
+    % Stem plot of an ACF/PACF in the current axes, with +/- bound lines.
+    %
+    % Parameters
+    % ----------
+    % lags : double vector
+    %     Lags on the horizontal axis.
+    % correlation_values : double vector
+    %     Correlation at each lag (same length as lags).
+    % confidence_bound : double
+    %     Dashed red lines are drawn at +/- this value.
+
+    stem(lags, correlation_values, 'filled', 'MarkerSize', 3);
+    hold on;
+    plot([min(lags) - 1, max(lags) + 1], [confidence_bound confidence_bound], 'r--');
+    plot([min(lags) - 1, max(lags) + 1], [-confidence_bound -confidence_bound], 'r--');
+    hold off;
+
+    set(gca, 'XLim', [min(lags) - 1, max(lags) + 1]);
+    grid on;
+end
+
+
 %% ========================================================================
-%  STEP 2 - DRAWING AND PRINTING HELPERS
+%  STEP 2 - EXPLORATORY DATA ANALYSIS: UTILS
+%  Functions used by both datasets (or generic helpers reused in later steps).
 %  ========================================================================
+
+function correlation = compute_pearson_correlation(first_values, second_values)
+    % Pearson correlation between two vectors.
+    %
+    % Parameters
+    % ----------
+    % first_values, second_values : double vectors of the same length
+    %
+    % Returns
+    % -------
+    % correlation : double in [-1, 1]
+
+    first_centered  = first_values(:)  - mean(first_values(:));
+    second_centered = second_values(:) - mean(second_values(:));
+
+    correlation = sum(first_centered .* second_centered) / sqrt(sum(first_centered .^ 2) * sum(second_centered .^ 2));
+end
+
 
 function draw_box_plot(grouped_values, group_labels)
     % Draw one box plot per group in the current axes (no toolbox).
@@ -1976,79 +2077,6 @@ function draw_box_plot(grouped_values, group_labels)
 end
 
 
-function draw_correlation_stems(lags, correlation_values, confidence_bound)
-    % Stem plot of an ACF/PACF in the current axes, with +/- bound lines.
-    %
-    % Parameters
-    % ----------
-    % lags : double vector
-    %     Lags on the horizontal axis.
-    % correlation_values : double vector
-    %     Correlation at each lag (same length as lags).
-    % confidence_bound : double
-    %     Dashed red lines are drawn at +/- this value.
-
-    stem(lags, correlation_values, 'filled', 'MarkerSize', 3);
-    hold on;
-    plot([min(lags) - 1, max(lags) + 1], [confidence_bound confidence_bound], 'r--');
-    plot([min(lags) - 1, max(lags) + 1], [-confidence_bound -confidence_bound], 'r--');
-    hold off;
-
-    set(gca, 'XLim', [min(lags) - 1, max(lags) + 1]);
-    grid on;
-end
-
-
-function color_map = build_blue_white_red_colormap(number_of_colors_per_half)
-    % Diverging colour map: blue (-1), white (0), red (+1).
-    %
-    % Parameters
-    % ----------
-    % number_of_colors_per_half : integer
-    %     Colours between blue and white (and between white and red).
-    %
-    % Returns
-    % -------
-    % color_map : double matrix, (2 * number_of_colors_per_half) x 3
-
-    ramp_up   = linspace(0, 1, number_of_colors_per_half)';
-    ramp_down = linspace(1, 0, number_of_colors_per_half)';
-    ones_column = ones(number_of_colors_per_half, 1);
-
-    blue_to_white = [ramp_up,      ramp_up,      ones_column];
-    white_to_red  = [ones_column,  ramp_down,    ramp_down];
-
-    color_map = [blue_to_white; white_to_red];
-end
-
-
-function print_correlation_matrix(short_names, correlation_matrix)
-    % Print a correlation matrix with row and column labels.
-    %
-    % Parameters
-    % ----------
-    % short_names : 1 x K cell of char
-    %     Labels of the variables (at most 5 characters each).
-    % correlation_matrix : double matrix, K x K
-
-    number_of_variables = numel(short_names);
-
-    fprintf('%-6s', '');
-    for column_index = 1:number_of_variables
-        fprintf('%6s', short_names{column_index});
-    end
-    fprintf('\n');
-
-    for row_index = 1:number_of_variables
-        fprintf('%-6s', short_names{row_index});
-        for column_index = 1:number_of_variables
-            fprintf('%6.2f', correlation_matrix(row_index, column_index));
-        end
-        fprintf('\n');
-    end
-end
-
-
 function save_figure(figure_handle, folder_path, file_name_without_extension)
     % Save a figure as a PNG file (150 dpi) and print where it went.
     %
@@ -2082,4 +2110,735 @@ function ensure_folder_exists(folder_path)
     if ~exist(folder_path, 'dir')
         mkdir(folder_path);
     end
+end
+
+
+%% ========================================================================
+%  STEP 3 - PREPROCESSING AND FEATURE ENGINEERING: CONCRETE
+%  Functions used only by the Concrete dataset.
+%  ========================================================================
+
+function [concrete_features, preprocessing_report] = preprocess_concrete_dataset(dataset)
+    % Clean the Concrete dataset and build its input features (Step 3).
+    %
+    % Cleaning
+    % --------
+    % The dataset has no missing values (Step 1). The 25 rows that are exact
+    % copies of an earlier row (all 9 variables equal, target included) are
+    % removed: they carry no new information, give those mixtures double
+    % weight in the loss, and a copy could fall in the training set while
+    % its twin falls in the test set (leakage).
+    %
+    % Features (the same for all architectures and algorithms)
+    % --------------------------------------------------------
+    % 1-7 : the seven ingredients, unchanged (kg/m^3)
+    % 8   : log10(Age) instead of Age. Age has skewness 3.26, only 14
+    %       distinct values from 1 to 365 days, and its Pearson correlation
+    %       with strength rises from 0.33 to 0.55 after the log (close to
+    %       its Spearman correlation, 0.60): strength grows roughly with
+    %       the logarithm of the curing time.
+    % 9   : binder-to-water ratio, (cement + slag + fly ash) / water.
+    %       Abrams' and Bolomey's laws relate strength to the ratio of
+    %       binder to water; it has the highest correlation with strength
+    %       of all candidates tested in Step 2 (0.64, against 0.50 for
+    %       cement alone and 0.56 for cement / water).
+    %
+    % Scaling is NOT done here: its statistics must come from the training
+    % set, which only exists after the split (Step 4).
+    %
+    % Parameters
+    % ----------
+    % dataset : struct
+    %     Output of load_concrete_dataset.
+    %
+    % Returns
+    % -------
+    % concrete_features : struct
+    %     Output of build_concrete_features (inputs, target, names, units,
+    %     mixture_id_of_each_row).
+    % preprocessing_report : struct
+    %     number_of_rows_before, number_of_rows_after,
+    %     number_of_duplicate_rows_removed
+
+    print_section_title('CONCRETE - Step 3: cleaning');
+
+    number_of_rows_before = size(dataset.inputs, 1);
+    [clean_dataset, number_of_duplicate_rows_removed] = remove_exact_duplicate_rows(dataset);
+    number_of_rows_after = size(clean_dataset.inputs, 1);
+
+    fprintf('Missing values                 : none (Step 1)\n');
+    fprintf('Exact duplicate rows removed   : %d\n', number_of_duplicate_rows_removed);
+    fprintf('Rows before / after            : %d / %d\n', number_of_rows_before, number_of_rows_after);
+
+    concrete_features = build_concrete_features(clean_dataset);
+
+    % ---- Feature table ----------------------------------------------------
+    print_section_title('CONCRETE - Step 3: input features');
+
+    number_of_features = size(concrete_features.inputs, 2);
+    fprintf('%-4s %-34s %-12s\n', '#', 'Feature', 'Unit');
+
+    for feature_index = 1:number_of_features
+        fprintf('%-4d %-34s %-12s\n', feature_index, ...
+                concrete_features.feature_names{feature_index}, ...
+                concrete_features.feature_units{feature_index});
+    end
+
+    fprintf('Target: %s (%s)\n', concrete_features.target_name, concrete_features.target_unit);
+
+    fprintf('\nCorrelation of each feature with the target (after cleaning):\n');
+
+    for feature_index = 1:number_of_features
+        fprintf('  %-34s r = %6.3f\n', concrete_features.feature_names{feature_index}, ...
+                compute_pearson_correlation(concrete_features.inputs(:, feature_index), ...
+                                            concrete_features.target));
+    end
+
+    fprintf('\nDistinct mixtures (groups for the Step 4 discussion): %d\n', ...
+            max(concrete_features.mixture_id_of_each_row));
+
+    print_network_sizes(number_of_features);
+
+    preprocessing_report.number_of_rows_before = number_of_rows_before;
+    preprocessing_report.number_of_rows_after  = number_of_rows_after;
+    preprocessing_report.number_of_duplicate_rows_removed = number_of_duplicate_rows_removed;
+end
+
+
+function [clean_dataset, number_of_rows_removed] = remove_exact_duplicate_rows(dataset)
+    % Remove rows that are identical (inputs and target) to an earlier row.
+    %
+    % The first occurrence is kept and the original row order is preserved.
+    %
+    % Parameters
+    % ----------
+    % dataset : struct
+    %     Output of load_concrete_dataset (fields inputs and target).
+    %
+    % Returns
+    % -------
+    % clean_dataset : struct
+    %     Same fields as the input, without the duplicate rows.
+    % number_of_rows_removed : integer
+
+    all_columns = [dataset.inputs, dataset.target];
+
+    [unused_unique_rows, index_of_first_occurrence] = unique(all_columns, 'rows', 'first');
+    rows_to_keep = sort(index_of_first_occurrence);
+
+    clean_dataset = dataset;
+    clean_dataset.inputs = dataset.inputs(rows_to_keep, :);
+    clean_dataset.target = dataset.target(rows_to_keep);
+
+    number_of_rows_removed = size(all_columns, 1) - numel(rows_to_keep);
+end
+
+
+function concrete_features = build_concrete_features(dataset)
+    % Build the 9 input features of the Concrete dataset (see Step 3 notes).
+    %
+    % Parameters
+    % ----------
+    % dataset : struct
+    %     Output of load_concrete_dataset (possibly after cleaning).
+    %
+    % Returns
+    % -------
+    % concrete_features : struct
+    %     inputs                 : N x 9 double, unscaled features
+    %     target                 : N x 1 double, compressive strength (MPa)
+    %     feature_names          : 1 x 9 cell of char
+    %     feature_units          : 1 x 9 cell of char
+    %     target_name, target_unit : char
+    %     mixture_id_of_each_row : N x 1 integer, same number for rows with
+    %                              the same 7 ingredients (used in Step 4)
+
+    cement_values = dataset.inputs(:, strcmp(dataset.input_names, 'Cement'));
+    slag_values   = dataset.inputs(:, strcmp(dataset.input_names, 'Blast furnace slag'));
+    ash_values    = dataset.inputs(:, strcmp(dataset.input_names, 'Fly ash'));
+    water_values  = dataset.inputs(:, strcmp(dataset.input_names, 'Water'));
+    age_values    = dataset.inputs(:, strcmp(dataset.input_names, 'Age'));
+
+    age_column_index        = find(strcmp(dataset.input_names, 'Age'));
+    ingredient_column_index = setdiff(1:size(dataset.inputs, 2), age_column_index);
+    ingredient_matrix       = dataset.inputs(:, ingredient_column_index);
+
+    log_age_values        = log10(age_values);
+    binder_to_water_ratio = (cement_values + slag_values + ash_values) ./ water_values;
+
+    concrete_features.inputs = [ingredient_matrix, log_age_values, binder_to_water_ratio];
+    concrete_features.target = dataset.target;
+
+    concrete_features.feature_names = [dataset.input_names(ingredient_column_index), {'log10(Age)', '(Cement + Slag + Ash) / Water'}];
+    concrete_features.feature_units = [dataset.input_units(ingredient_column_index), {'log10(days)', 'ratio'}];
+
+    concrete_features.target_name = dataset.target_name;
+    concrete_features.target_unit = dataset.target_unit;
+
+    [unused_distinct_mixtures, unused_first_index, mixture_id_of_each_row] = unique(ingredient_matrix, 'rows');
+    concrete_features.mixture_id_of_each_row = mixture_id_of_each_row(:);
+end
+
+
+%% ========================================================================
+%  STEP 3 - PREPROCESSING AND FEATURE ENGINEERING: MELBOURNE
+%  Functions used only by the Melbourne dataset.
+%  ========================================================================
+
+function melbourne_features = preprocess_melbourne_dataset(dataset, candidate_window_lengths, split_fractions)
+    % Clean the Melbourne series, choose the window p and build the samples.
+    %
+    % Cleaning
+    % --------
+    % The 3 values with a corrupted minus sign were already repaired when
+    % reading the file (Step 1). The 2 missing days (1984-12-31 and
+    % 1988-12-31) are isolated single days, so they are filled by linear
+    % interpolation between the day before and the day after. Without this,
+    % a "lag of 1 day" would be a lag of 2 days at those points. The 2
+    % interpolated values may appear as INPUTS (lags) but never as TARGETS:
+    % the two samples whose target is an interpolated day are dropped, so
+    % the model is never trained or evaluated on an invented value.
+    %
+    % Window length p
+    % ---------------
+    % Candidate values of p are compared with a linear autoregressive model
+    % (with and without calendar features) fitted on the training block and
+    % evaluated on the validation block of the chronological split that is
+    % also used in Step 4. The test block is not touched. The chosen p is
+    % the one with the lowest validation RMSE with calendar features; the
+    % PACF of Step 2 (large up to lag ~7) supports the same range.
+    %
+    % Features (the same for all architectures and algorithms)
+    % --------------------------------------------------------
+    % T(t-p+1), ..., T(t)   : the p most recent temperatures (degC)
+    % sin, cos of day t     : position of day t in the annual cycle. The
+    %                         annual cycle explains 53.5 % of the variance
+    %                         (Step 2), and sin/cos give the season without
+    %                         the jump between 31 December and 1 January.
+    % Target: T(t+1).
+    %
+    % Scaling is NOT done here (statistics from the training block only,
+    % applied in Step 4 right after the split).
+    %
+    % Parameters
+    % ----------
+    % dataset : struct
+    %     Output of load_melbourne_dataset.
+    % candidate_window_lengths : integer vector
+    %     Values of p to compare, e.g. [1 2 3 4 5 7 10 14 21 30].
+    % split_fractions : 1 x 3 double
+    %     Fractions of the calendar span for training, validation and test,
+    %     e.g. [0.70 0.15 0.15].
+    %
+    % Returns
+    % -------
+    % melbourne_features : struct
+    %     Output of build_melbourne_windows for the chosen p (inputs,
+    %     target, target_dates, last_input_dates, feature_names), plus:
+    %     chosen_window_length      : integer p
+    %     split_cutoffs             : output of compute_chronological_split_cutoffs
+    %     window_comparison         : output of compare_window_lengths_with_linear_model
+    %     daily_dates, daily_temperature_celsius, day_is_interpolated :
+    %                                 the complete daily series used
+
+    % ---- 1. Fill the missing days -----------------------------------------
+    print_section_title('MELBOURNE - Step 3: cleaning');
+
+    [daily_dates, daily_temperature_celsius, day_is_interpolated] = fill_missing_days_by_linear_interpolation(dataset.dates, dataset.temperature_celsius);
+
+    fprintf('Corrupted minus signs repaired at reading (Step 1): %d\n', numel(dataset.repaired_dates));
+    fprintf('Missing days filled by linear interpolation      : %d\n', sum(day_is_interpolated));
+
+    interpolated_rows = find(day_is_interpolated);
+
+    for list_index = 1:numel(interpolated_rows)
+        row_index = interpolated_rows(list_index);
+        fprintf('  %s : %.2f degC (between %.1f and %.1f)\n', ...
+                datestr(daily_dates(row_index), 'yyyy-mm-dd'), ...
+                daily_temperature_celsius(row_index), ...
+                daily_temperature_celsius(row_index - 1), ...
+                daily_temperature_celsius(row_index + 1));
+    end
+
+    fprintf('Days in the complete series                      : %d\n', numel(daily_dates));
+    fprintf('(Interpolated days are used as inputs only, never as targets.)\n');
+
+    % ---- 2. Chronological blocks (the same ones are used in Step 4) -------
+    split_cutoffs = compute_chronological_split_cutoffs(daily_dates(1), daily_dates(end), split_fractions);
+
+    print_section_title('MELBOURNE - Step 3: chronological blocks (by target date)');
+    fprintf('Training   : %s to %s\n', datestr(daily_dates(1), 'yyyy-mm-dd'), ...
+            datestr(split_cutoffs.first_validation_date - 1, 'yyyy-mm-dd'));
+    fprintf('Validation : %s to %s\n', datestr(split_cutoffs.first_validation_date, 'yyyy-mm-dd'), ...
+            datestr(split_cutoffs.first_test_date - 1, 'yyyy-mm-dd'));
+    fprintf('Test       : %s to %s   (not used in Step 3)\n', ...
+            datestr(split_cutoffs.first_test_date, 'yyyy-mm-dd'), ...
+            datestr(daily_dates(end), 'yyyy-mm-dd'));
+
+    % ---- 3. Choose the window length p ------------------------------------
+    window_comparison = compare_window_lengths_with_linear_model(daily_dates, daily_temperature_celsius, day_is_interpolated, candidate_window_lengths, split_cutoffs);
+
+    chosen_window_length = window_comparison.best_window_length_with_calendar;
+
+    fprintf('\nChosen window length p = %d (lowest validation RMSE with calendar features).\n', chosen_window_length);
+
+    % ---- 4. Build the samples with the chosen p ---------------------------
+    melbourne_features = build_melbourne_windows(daily_dates, daily_temperature_celsius, day_is_interpolated, chosen_window_length, true);
+
+    print_section_title('MELBOURNE - Step 3: input features');
+    number_of_features = size(melbourne_features.inputs, 2);
+
+    for feature_index = 1:number_of_features
+        fprintf('%-4d %s\n', feature_index, melbourne_features.feature_names{feature_index});
+    end
+    
+    fprintf('Target: T(t+1) (degC)\n');
+    fprintf('Samples: %d (first %d days have no complete window; %d targets were interpolated days)\n', ...
+            numel(melbourne_features.target), chosen_window_length - 1, sum(day_is_interpolated));
+
+    print_network_sizes(number_of_features);
+
+    melbourne_features.chosen_window_length      = chosen_window_length;
+    melbourne_features.split_cutoffs             = split_cutoffs;
+    melbourne_features.window_comparison         = window_comparison;
+    melbourne_features.daily_dates               = daily_dates;
+    melbourne_features.daily_temperature_celsius = daily_temperature_celsius;
+    melbourne_features.day_is_interpolated       = day_is_interpolated;
+end
+
+
+function [daily_dates, daily_values, day_is_interpolated] = fill_missing_days_by_linear_interpolation(dates, values)
+    % Rebuild a complete daily axis and fill absent days by interpolation.
+    %
+    % Parameters
+    % ----------
+    % dates : double column
+    %     Serial date numbers, sorted, without duplicates.
+    % values : double column
+    %     Observed value of each date.
+    %
+    % Returns
+    % -------
+    % daily_dates : double column
+    %     Every calendar day from the first to the last date.
+    % daily_values : double column
+    %     Observed values, with absent days filled by linear interpolation
+    %     between the nearest observed days before and after.
+    % day_is_interpolated : logical column
+    %     True for the days that were filled.
+
+    daily_dates = (dates(1):dates(end))';
+
+    day_is_interpolated = ~ismember(daily_dates, dates);
+
+    daily_values = interp1(dates(:), values(:), daily_dates, 'linear');
+end
+
+
+function windows = build_melbourne_windows(daily_dates, daily_values, day_is_interpolated, window_length, use_calendar_features)
+    % Build one sample per day t: inputs from days t-p+1..t, target day t+1.
+    %
+    % Only information available at the end of day t is used: the p most
+    % recent values and, optionally, the calendar position of day t.
+    % Samples whose target day was interpolated are dropped.
+    %
+    % Parameters
+    % ----------
+    % daily_dates : double column
+    %     Complete daily axis (output of fill_missing_days_by_linear_interpolation).
+    % daily_values : double column
+    %     Value of each day.
+    % day_is_interpolated : logical column
+    %     True for days filled by interpolation.
+    % window_length : integer
+    %     Number p of most recent values used as inputs.
+    % use_calendar_features : logical
+    %     If true, sin and cos of the day of the year of day t are appended.
+    %
+    % Returns
+    % -------
+    % windows : struct
+    %     inputs           : M x (p or p+2) double, unscaled; lag columns
+    %                        ordered from oldest T(t-p+1) to newest T(t)
+    %     target           : M x 1 double, T(t+1)
+    %     target_dates     : M x 1 serial dates of day t+1
+    %     last_input_dates : M x 1 serial dates of day t
+    %     feature_names    : 1 x (p or p+2) cell of char
+    %     number_of_lag_columns : p
+
+    number_of_days = numel(daily_values);
+
+    % Index of day t for every possible sample (needs p days of history and a following day for the target).
+    index_of_day_t = (window_length:number_of_days - 1)';
+
+    target_is_interpolated = day_is_interpolated(index_of_day_t + 1);
+    index_of_day_t = index_of_day_t(~target_is_interpolated);
+
+    number_of_samples = numel(index_of_day_t);
+
+    % Row k of lag_index_matrix holds the days t-p+1, ..., t of sample k.
+    lag_offsets      = (1 - window_length):0;
+    lag_index_matrix = repmat(index_of_day_t, 1, window_length) + repmat(lag_offsets, number_of_samples, 1);
+
+    lag_inputs = reshape(daily_values(lag_index_matrix), number_of_samples, window_length);
+
+    lag_names = cell(1, window_length);
+
+    for lag_position = 1:window_length
+        days_back = window_length - lag_position;
+
+        if days_back == 0
+            lag_names{lag_position} = 'T(t)';
+        else
+            lag_names{lag_position} = sprintf('T(t-%d)', days_back);
+        end
+    end
+
+    if use_calendar_features
+        calendar_inputs  = compute_calendar_features(daily_dates(index_of_day_t));
+        windows.inputs        = [lag_inputs, calendar_inputs];
+        windows.feature_names = [lag_names, {'sin(2*pi*day of year / 365.2425)', 'cos(2*pi*day of year / 365.2425)'}];
+    else
+        windows.inputs        = lag_inputs;
+        windows.feature_names = lag_names;
+    end
+
+    windows.target           = daily_values(index_of_day_t + 1);
+    windows.target_dates     = daily_dates(index_of_day_t + 1);
+    windows.last_input_dates = daily_dates(index_of_day_t);
+    windows.number_of_lag_columns = window_length;
+end
+
+
+function calendar_features = compute_calendar_features(dates)
+    % Sine and cosine of the position of each date in the annual cycle.
+    %
+    % angle = 2*pi*(day of year - 1) / 365.2425, so 1 January and
+    % 31 December are close to each other, as they are in the climate.
+    %
+    % Parameters
+    % ----------
+    % dates : double column
+    %     Serial date numbers.
+    %
+    % Returns
+    % -------
+    % calendar_features : N x 2 double, columns [sin(angle), cos(angle)]
+
+    days_in_year = 365.2425;
+
+    angle_in_radians = 2 * pi * (compute_day_of_year(dates) - 1) / days_in_year;
+
+    calendar_features = [sin(angle_in_radians), cos(angle_in_radians)];
+end
+
+
+function window_comparison = compare_window_lengths_with_linear_model(daily_dates, daily_values, day_is_interpolated, candidate_window_lengths, split_cutoffs)
+    % Validation RMSE of a linear autoregressive model for several p.
+    %
+    % For each p, a linear model with intercept is fitted by least squares
+    % on the training block and evaluated on the validation block, with and
+    % without the two calendar features. The persistence forecast
+    % T(t+1) = T(t) is reported as a reference. The test block is not used.
+    %
+    % Parameters
+    % ----------
+    % daily_dates, daily_values, day_is_interpolated : columns
+    %     Complete daily series (see build_melbourne_windows).
+    % candidate_window_lengths : integer vector
+    %     Values of p to compare.
+    % split_cutoffs : struct
+    %     Output of compute_chronological_split_cutoffs.
+    %
+    % Returns
+    % -------
+    % window_comparison : struct
+    %     candidate_window_lengths            : the input vector
+    %     validation_rmse_lags_only           : one value per p (degC)
+    %     validation_rmse_with_calendar       : one value per p (degC)
+    %     validation_rmse_persistence         : scalar (degC)
+    %     best_window_length_with_calendar    : p with the lowest RMSE
+
+    number_of_candidates = numel(candidate_window_lengths);
+
+    validation_rmse_lags_only     = zeros(1, number_of_candidates);
+    validation_rmse_with_calendar = zeros(1, number_of_candidates);
+
+    for candidate_index = 1:number_of_candidates
+        window_length = candidate_window_lengths(candidate_index);
+
+        for use_calendar_features = [false true]
+            windows = build_melbourne_windows(daily_dates, daily_values, day_is_interpolated, window_length, use_calendar_features);
+
+            block_of_each_sample = assign_samples_to_chronological_blocks(windows.target_dates, split_cutoffs);
+            is_training   = (block_of_each_sample == 1);
+            is_validation = (block_of_each_sample == 2);
+
+            coefficients = fit_linear_least_squares(windows.inputs(is_training, :), windows.target(is_training));
+            validation_prediction = predict_linear_model(windows.inputs(is_validation, :), coefficients);
+            validation_rmse = compute_root_mean_squared_error(windows.target(is_validation), validation_prediction);
+
+            if use_calendar_features
+                validation_rmse_with_calendar(candidate_index) = validation_rmse;
+            else
+                validation_rmse_lags_only(candidate_index) = validation_rmse;
+            end
+        end
+    end
+
+    % Persistence on the same validation samples (p = 1 windows).
+    windows_of_one_day = build_melbourne_windows(daily_dates, daily_values, day_is_interpolated, 1, false);
+    block_of_each_sample = assign_samples_to_chronological_blocks(windows_of_one_day.target_dates, split_cutoffs);
+    is_validation = (block_of_each_sample == 2);
+    validation_rmse_persistence = compute_root_mean_squared_error(windows_of_one_day.target(is_validation), windows_of_one_day.inputs(is_validation, 1));
+
+    [unused_lowest_rmse, best_candidate_index] = min(validation_rmse_with_calendar);
+
+    % ---- Print the comparison --------------------------------------------
+    print_section_title('MELBOURNE - Step 3: choice of the window length p');
+    fprintf('Linear autoregressive model, fitted on training, RMSE on validation (degC)\n\n');
+    fprintf('%-6s %14s %16s\n', 'p', 'lags only', 'lags + calendar');
+
+    for candidate_index = 1:number_of_candidates
+        fprintf('%-6d %14.3f %16.3f\n', candidate_window_lengths(candidate_index), ...
+                validation_rmse_lags_only(candidate_index), ...
+                validation_rmse_with_calendar(candidate_index));
+    end
+
+    fprintf('\nPersistence T(t+1) = T(t) on the same validation block: %.3f degC\n', validation_rmse_persistence);
+
+    window_comparison.candidate_window_lengths         = candidate_window_lengths;
+    window_comparison.validation_rmse_lags_only        = validation_rmse_lags_only;
+    window_comparison.validation_rmse_with_calendar    = validation_rmse_with_calendar;
+    window_comparison.validation_rmse_persistence      = validation_rmse_persistence;
+    window_comparison.best_window_length_with_calendar = candidate_window_lengths(best_candidate_index);
+end
+
+
+function split_cutoffs = compute_chronological_split_cutoffs(first_date, last_date, split_fractions)
+    % First validation date and first test date of a chronological split.
+    %
+    % The calendar span is cut by fractions of days, so the blocks are the
+    % same whatever window length p is used later.
+    %
+    % Parameters
+    % ----------
+    % first_date, last_date : double
+    %     Serial dates of the first and last day of the series.
+    % split_fractions : 1 x 3 double
+    %     Fractions for training, validation and test (must sum to 1).
+    %
+    % Returns
+    % -------
+    % split_cutoffs : struct
+    %     first_validation_date : serial date of the first validation day
+    %     first_test_date       : serial date of the first test day
+    %     split_fractions       : the input fractions
+
+    if abs(sum(split_fractions) - 1) > 1e-9
+        error('compute_chronological_split_cutoffs:badFractions', ...
+              'split_fractions must sum to 1, got %.4f.', sum(split_fractions));
+    end
+
+    number_of_days = last_date - first_date + 1;
+
+    split_cutoffs.first_validation_date = first_date + round(split_fractions(1) * number_of_days);
+    split_cutoffs.first_test_date       = first_date + round((split_fractions(1) + split_fractions(2)) * number_of_days);
+    split_cutoffs.split_fractions       = split_fractions;
+end
+
+
+function block_of_each_sample = assign_samples_to_chronological_blocks(target_dates, split_cutoffs)
+    % Block of each sample according to the date of its TARGET.
+    %
+    % A sample belongs to the block that contains the day it predicts. The
+    % first validation samples therefore use the last training days as
+    % inputs, which is allowed (they are in the past); no training sample
+    % ever uses a validation or test value.
+    %
+    % Parameters
+    % ----------
+    % target_dates : double column
+    %     Serial date of the target day of each sample.
+    % split_cutoffs : struct
+    %     Output of compute_chronological_split_cutoffs.
+    %
+    % Returns
+    % -------
+    % block_of_each_sample : double column
+    %     1 = training, 2 = validation, 3 = test.
+
+    block_of_each_sample = ones(size(target_dates));
+    block_of_each_sample(target_dates >= split_cutoffs.first_validation_date) = 2;
+    block_of_each_sample(target_dates >= split_cutoffs.first_test_date)       = 3;
+end
+
+
+%% ========================================================================
+%  STEP 3 - PREPROCESSING AND FEATURE ENGINEERING: UTILS
+%  Functions used by both datasets (or generic helpers reused in later steps).
+%  ========================================================================
+
+function scaler = fit_standardization(training_matrix)
+    % Mean and standard deviation of each column, from training data only.
+    %
+    % Parameters
+    % ----------
+    % training_matrix : double matrix, N x K
+    %     Training rows only. Never pass validation or test rows here.
+    %
+    % Returns
+    % -------
+    % scaler : struct
+    %     mean               : 1 x K
+    %     standard_deviation : 1 x K (a constant column gets 1, to avoid
+    %                          dividing by zero)
+
+    column_mean = mean(training_matrix, 1);
+    column_standard_deviation = std(training_matrix, 0, 1);
+
+    column_is_constant = (column_standard_deviation == 0);
+    column_standard_deviation(column_is_constant) = 1;
+
+    scaler.mean               = column_mean;
+    scaler.standard_deviation = column_standard_deviation;
+end
+
+
+function scaled_matrix = apply_standardization(matrix, scaler)
+    % Standardise a matrix with statistics computed on the training set.
+    %
+    % Parameters
+    % ----------
+    % matrix : double matrix, N x K
+    %     Training, validation or test rows.
+    % scaler : struct
+    %     Output of fit_standardization.
+    %
+    % Returns
+    % -------
+    % scaled_matrix : double matrix, N x K, (matrix - mean) ./ std
+
+    number_of_rows = size(matrix, 1);
+
+    scaled_matrix = (matrix - repmat(scaler.mean, number_of_rows, 1)) ./ repmat(scaler.standard_deviation, number_of_rows, 1);
+end
+
+
+function original_matrix = invert_standardization(scaled_matrix, scaler)
+    % Bring standardised values back to their original unit.
+    %
+    % Used to report predictions and errors in MPa or degC.
+    %
+    % Parameters
+    % ----------
+    % scaled_matrix : double matrix, N x K
+    % scaler : struct
+    %     Output of fit_standardization.
+    %
+    % Returns
+    % -------
+    % original_matrix : double matrix, N x K, scaled .* std + mean
+
+    number_of_rows = size(scaled_matrix, 1);
+
+    original_matrix = scaled_matrix .* repmat(scaler.standard_deviation, number_of_rows, 1) + ...
+                      repmat(scaler.mean, number_of_rows, 1);
+end
+
+
+function coefficients = fit_linear_least_squares(inputs, target)
+    % Least-squares linear model with intercept (also a Step 8 reference).
+    %
+    % Parameters
+    % ----------
+    % inputs : double matrix, N x K
+    % target : double column, N x 1
+    %
+    % Returns
+    % -------
+    % coefficients : (K + 1) x 1 double, intercept first
+
+    number_of_rows = size(inputs, 1);
+    design_matrix  = [ones(number_of_rows, 1), inputs];
+
+    coefficients = design_matrix \ target(:);
+end
+
+
+function prediction = predict_linear_model(inputs, coefficients)
+    % Prediction of a linear model fitted with fit_linear_least_squares.
+    %
+    % Parameters
+    % ----------
+    % inputs : double matrix, N x K
+    % coefficients : (K + 1) x 1 double, intercept first
+    %
+    % Returns
+    % -------
+    % prediction : N x 1 double
+
+    number_of_rows = size(inputs, 1);
+
+    prediction = [ones(number_of_rows, 1), inputs] * coefficients;
+end
+
+
+function rmse = compute_root_mean_squared_error(observed_values, predicted_values)
+    % Root mean squared error, in the unit of the values.
+    %
+    % Parameters
+    % ----------
+    % observed_values, predicted_values : double vectors of the same length
+    %
+    % Returns
+    % -------
+    % rmse : double, sqrt(mean((observed - predicted).^2))
+
+    errors = observed_values(:) - predicted_values(:);
+
+    rmse = sqrt(mean(errors .^ 2));
+end
+
+
+function number_of_parameters = count_network_parameters(layer_sizes)
+    % Number of weights and biases of a fully connected network.
+    %
+    % Parameters
+    % ----------
+    % layer_sizes : integer vector
+    %     [inputs, hidden_1, ..., hidden_k, outputs], e.g. [9 10 1].
+    %
+    % Returns
+    % -------
+    % number_of_parameters : integer, sum over layers of (fan_in + 1) * fan_out
+
+    number_of_parameters = 0;
+
+    for layer_index = 1:numel(layer_sizes) - 1
+        fan_in  = layer_sizes(layer_index);
+        fan_out = layer_sizes(layer_index + 1);
+        number_of_parameters = number_of_parameters + (fan_in + 1) * fan_out;
+    end
+end
+
+
+function print_network_sizes(number_of_inputs)
+    % Print the parameter count of architectures A, B and C for d inputs.
+    %
+    % Parameters
+    % ----------
+    % number_of_inputs : integer
+    %     Number d of input features.
+
+    reference_width = 10;
+
+    reference_layers = [number_of_inputs, reference_width, 1];
+    wide_layers      = [number_of_inputs, 10 * reference_width, 1];
+    deep_layers      = [number_of_inputs, reference_width * ones(1, 10), 1];
+
+    fprintf('\nNetwork sizes with d = %d inputs:\n', number_of_inputs);
+    fprintf('  A Reference (1 x %3d) : %5d parameters\n', reference_width, count_network_parameters(reference_layers));
+    fprintf('  B Wide      (1 x %3d) : %5d parameters\n', 10 * reference_width, count_network_parameters(wide_layers));
+    fprintf('  C Deep     (10 x %3d) : %5d parameters\n', reference_width, count_network_parameters(deep_layers));
 end

@@ -7,6 +7,7 @@
 % ---------------
 % Step 1 - Data acquisition and initial inspection.
 % Step 2 - Exploratory data analysis (tables printed, figures saved).
+% Step 3 - Preprocessing and feature engineering.
 %
 % How to run
 % ----------
@@ -50,3 +51,22 @@ figures_folder = fullfile(data_folder, 'figures');
 
 concrete_eda_report  = L.explore_concrete_dataset(concrete_dataset, figures_folder);
 melbourne_eda_report = L.explore_melbourne_dataset(melbourne_dataset, figures_folder);
+
+
+%% ========================================================================
+%  STEP 3 - PREPROCESSING AND FEATURE ENGINEERING
+%  ========================================================================
+%
+% Both datasets end up with d = 9 input features, used unchanged by every
+% architecture and algorithm. Scaling statistics need the training set, so
+% the scalers (L.fit_standardization) are fitted and applied in Step 4,
+% right after the split.
+
+% ---- Concrete: remove exact duplicates; log10(Age); binder/water ratio ----
+[concrete_features, concrete_preprocessing_report] = L.preprocess_concrete_dataset(concrete_dataset);
+
+% ---- Melbourne: fill 2 missing days; choose p; lags + calendar features ---
+melbourne_candidate_window_lengths = [1 2 3 4 5 7 10 14 21 30];
+melbourne_split_fractions          = [0.70 0.15 0.15];   % train / validation / test
+
+melbourne_features = L.preprocess_melbourne_dataset(melbourne_dataset, melbourne_candidate_window_lengths, melbourne_split_fractions);
