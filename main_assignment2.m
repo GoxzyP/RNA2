@@ -8,6 +8,7 @@
 % Step 1 - Data acquisition and initial inspection.
 % Step 2 - Exploratory data analysis (tables printed, figures saved).
 % Step 3 - Preprocessing and feature engineering.
+% Step 4 - Data partitioning (and scaling with training statistics).
 %
 % How to run
 % ----------
@@ -70,3 +71,23 @@ melbourne_candidate_window_lengths = [1 2 3 4 5 7 10 14 21 30];
 melbourne_split_fractions          = [0.70 0.15 0.15];   % train / validation / test
 
 melbourne_features = L.preprocess_melbourne_dataset(melbourne_dataset, melbourne_candidate_window_lengths, melbourne_split_fractions);
+
+
+%% ========================================================================
+%  STEP 4 - DATA PARTITIONING
+%  ========================================================================
+%
+% The splits are computed once here and reused for the whole assignment, so
+% the variability across repetitions comes only from the weight
+% initialisation and the order of the mini-batches. Scalers are fitted on
+% the training subset only and applied to all three subsets.
+
+% ---- Concrete: random 70/15/15 split + evidence for the discussion --------
+concrete_split_fractions  = [0.70 0.15 0.15];
+concrete_split_seed       = 42;
+concrete_comparison_seeds = 1:20;   % only for the random-versus-grouped comparison
+
+concrete_partition = L.partition_concrete_dataset(concrete_features, concrete_split_fractions, concrete_split_seed, concrete_comparison_seeds);
+
+% ---- Melbourne: chronological blocks fixed in Step 3 ----------------------
+melbourne_partition = L.partition_melbourne_dataset(melbourne_features);

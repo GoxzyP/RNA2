@@ -106,6 +106,28 @@ function L = ann_lib()
     L.compute_root_mean_squared_error = @compute_root_mean_squared_error;
     L.count_network_parameters        = @count_network_parameters;
     L.print_network_sizes             = @print_network_sizes;
+    % ======================================================================
+    % STEP 4 - DATA PARTITIONING
+    % ======================================================================
+
+    % ---- CONCRETE --------------------------------------------------------
+    L.partition_concrete_dataset         = @partition_concrete_dataset;
+    L.assign_rows_to_random_blocks       = @assign_rows_to_random_blocks;
+    L.assign_groups_to_blocks            = @assign_groups_to_blocks;
+    L.count_rows_with_group_in_training  = @count_rows_with_group_in_training;
+    L.compare_random_and_grouped_splits  = @compare_random_and_grouped_splits;
+    L.predict_nearest_neighbour          = @predict_nearest_neighbour;
+
+    % ---- MELBOURNE -------------------------------------------------------
+    L.partition_melbourne_dataset = @partition_melbourne_dataset;
+
+    % ---- UTILS -----------------------------------------------------------
+    L.generate_uniform_random_numbers = @generate_uniform_random_numbers;
+    L.check_split_fractions           = @check_split_fractions;
+    L.build_partition                 = @build_partition;
+    L.scale_partition                 = @scale_partition;
+    L.print_partition_summary         = @print_partition_summary;
+    L.print_check_result              = @print_check_result;
 end
 
 
@@ -2742,8 +2764,7 @@ function original_matrix = invert_standardization(scaled_matrix, scaler)
 
     number_of_rows = size(scaled_matrix, 1);
 
-    original_matrix = scaled_matrix .* repmat(scaler.standard_deviation, number_of_rows, 1) + ...
-                      repmat(scaler.mean, number_of_rows, 1);
+    original_matrix = scaled_matrix .* repmat(scaler.standard_deviation, number_of_rows, 1) + repmat(scaler.mean, number_of_rows, 1);
 end
 
 
@@ -2841,4 +2862,569 @@ function print_network_sizes(number_of_inputs)
     fprintf('  A Reference (1 x %3d) : %5d parameters\n', reference_width, count_network_parameters(reference_layers));
     fprintf('  B Wide      (1 x %3d) : %5d parameters\n', 10 * reference_width, count_network_parameters(wide_layers));
     fprintf('  C Deep     (10 x %3d) : %5d parameters\n', reference_width, count_network_parameters(deep_layers));
+end
+
+
+%% ========================================================================
+%  STEP 4 - DATA PARTITIONING: CONCRETE
+%  Functions used only by the Concrete dataset.
+%  ========================================================================
+
+function partition = partition_concrete_dataset(concrete_features, split_fractions, split_seed, comparison_seeds)
+    % Random 70/15/15 split of Concrete, scaling, and evidence for the discussion.
+    %
+    % Split
+    % -----
+    % Rows are assigned at random to training, validation and test with a
+    % fixed seed (assignment requirement). The split is computed once here
+    % and reused for the whole assignment.
+    %
+    % Discussion: is a random split appropriate?
+    % ------------------------------------------
+    % The same mixture (7 ingredients) appears several times, tested at
+    % different ages. With a random split, a mixture can be in training at
+    % 7 days and in test at 28 days, so the test set measures "known recipe
+    % at a new age" rather than "new recipe". To give numbers to this
+    % discussion, this function:
+    %   1. counts the validation and test rows whose mixture is also in
+    %      the training set;
+    %   2. compares, over several seeds and on the VALIDATION set only, a
+    %      random split with a split by mixture (all rows of a mixture in
+    %      the same subset), using two simple models: linear regression
+    %      and 1-nearest neighbour (a model that memorises training rows).
+    % The test set is never used here.
+    %
+    % Scaling
+    % -------
+    % Inputs and target are standardised with the mean and standard
+    % deviation of the TRAINING rows only.
+    %
+    % Parameters
+    % ----------
+    % concrete_features : struct
+    %     Output of preprocess_concrete_dataset.
+    % split_fractions : 1 x 3 double
+    %     Fractions for training, validation and test, e.g. [0.70 0.15 0.15].
+    % split_seed : integer in 1 .. 2147483646
+    %     Seed of the split.
+    % comparison_seeds : integer vector
+    %     Seeds used only for the random-versus-grouped comparison.
+    %
+    % Returns
+    % -------
+    % partition : struct
+    %     Output of build_partition + scale_partition, plus:
+    %     split_seed, split_fractions
+    %     mixture_overlap   : output of count_rows_with_group_in_training
+    %     split_comparison  : output of compare_random_and_grouped_splits
+
+    number_of_rows = size(concrete_features.inputs, 1);
+
+    block_of_each_row = assign_rows_to_random_blocks(number_of_rows, split_fractions, split_seed);
+
+    partition = build_partition(concrete_features.inputs, concrete_features.target, block_of_each_row);
+
+    input_scaler  = fit_standardization(partition.training.inputs);
+    target_scaler = fit_standardization(partition.training.target);
+    partition = scale_partition(partition, input_scaler, target_scaler);
+
+    partition.split_seed      = split_seed;
+    partition.split_fractions = split_fractions;
+
+    % ---- Sizes and scaling check ------------------------------------------
+    print_section_title(sprintf('CONCRETE - Step 4: random split (seed %d)', split_seed));
+    print_partition_summary(partition, concrete_features.target_unit);
+
+    % ---- Mixtures shared between subsets ----------------------------------
+    mixture_overlap = count_rows_with_group_in_training(concrete_features.mixture_id_of_each_row, block_of_each_row);
+
+    print_section_title('CONCRETE - Step 4: mixtures shared with the training set');
+    fprintf('Validation rows whose mixture is also in training : %d of %d (%.1f %%)\n', mixture_overlap.validation_rows_with_group_in_training, mixture_overlap.number_of_validation_rows, 100 * mixture_overlap.validation_fraction);
+    fprintf('Test rows whose mixture is also in training       : %d of %d (%.1f %%)\n', mixture_overlap.test_rows_with_group_in_training, mixture_overlap.number_of_test_rows, 100 * mixture_overlap.test_fraction);
+
+    % ---- Random split versus split by mixture -----------------------------
+    split_comparison = compare_random_and_grouped_splits(concrete_features, split_fractions, comparison_seeds);
+
+    partition.mixture_overlap  = mixture_overlap;
+    partition.split_comparison = split_comparison;
+end
+
+
+function block_of_each_row = assign_rows_to_random_blocks(number_of_rows, split_fractions, seed)
+    % Assign each row at random to training (1), validation (2) or test (3).
+    %
+    % The rows are put in a random order and cut by the fractions. The
+    % random order comes from generate_uniform_random_numbers, so the split
+    % is identical in MATLAB and in GNU Octave.
+    %
+    % Parameters
+    % ----------
+    % number_of_rows : integer
+    % split_fractions : 1 x 3 double, summing to 1
+    % seed : integer in 1 .. 2147483646
+    %
+    % Returns
+    % -------
+    % block_of_each_row : number_of_rows x 1 double, values 1, 2 or 3
+
+    check_split_fractions(split_fractions);
+
+    [unused_sorted_values, random_order] = sort(generate_uniform_random_numbers(seed, number_of_rows));
+
+    number_of_training_rows   = round(split_fractions(1) * number_of_rows);
+    number_of_validation_rows = round(split_fractions(2) * number_of_rows);
+
+    block_of_each_row = 3 * ones(number_of_rows, 1);
+
+    block_of_each_row(random_order(1:number_of_training_rows)) = 1;
+    block_of_each_row(random_order(number_of_training_rows + 1:number_of_training_rows + number_of_validation_rows)) = 2;
+end
+
+
+function block_of_each_row = assign_groups_to_blocks(group_id_of_each_row, split_fractions, seed)
+    % Split by group: all rows of the same group go to the same subset.
+    %
+    % Groups are taken in a random order and added to training until it
+    % holds the training fraction of the ROWS, then to validation, and the
+    % rest go to test. Subset sizes are therefore close to, not exactly,
+    % the requested fractions.
+    %
+    % Parameters
+    % ----------
+    % group_id_of_each_row : N x 1 integer, values 1 .. G
+    % split_fractions : 1 x 3 double, summing to 1
+    % seed : integer in 1 .. 2147483646
+    %
+    % Returns
+    % -------
+    % block_of_each_row : N x 1 double, values 1, 2 or 3
+
+    check_split_fractions(split_fractions);
+
+    number_of_rows   = numel(group_id_of_each_row);
+    number_of_groups = max(group_id_of_each_row);
+
+    [unused_sorted_values, random_group_order] = sort(generate_uniform_random_numbers(seed, number_of_groups));
+
+    target_training_rows   = round(split_fractions(1) * number_of_rows);
+    target_validation_rows = round(split_fractions(2) * number_of_rows);
+
+    block_of_each_row = zeros(number_of_rows, 1);
+    rows_assigned_so_far = 0;
+
+    for order_index = 1:number_of_groups
+        current_group = random_group_order(order_index);
+        row_is_in_group = (group_id_of_each_row == current_group);
+
+        if rows_assigned_so_far < target_training_rows
+            block_of_each_row(row_is_in_group) = 1;
+        elseif rows_assigned_so_far < target_training_rows + target_validation_rows
+            block_of_each_row(row_is_in_group) = 2;
+        else
+            block_of_each_row(row_is_in_group) = 3;
+        end
+
+        rows_assigned_so_far = rows_assigned_so_far + sum(row_is_in_group);
+    end
+end
+
+
+function group_overlap = count_rows_with_group_in_training(group_id_of_each_row, block_of_each_row)
+    % Validation and test rows whose group also has rows in training.
+    %
+    % Parameters
+    % ----------
+    % group_id_of_each_row : N x 1 integer
+    % block_of_each_row : N x 1, values 1 (training), 2 (validation), 3 (test)
+    %
+    % Returns
+    % -------
+    % group_overlap : struct
+    %     validation_rows_with_group_in_training, number_of_validation_rows,
+    %     validation_fraction, test_rows_with_group_in_training,
+    %     number_of_test_rows, test_fraction
+
+    groups_in_training = unique(group_id_of_each_row(block_of_each_row == 1));
+
+    validation_groups = group_id_of_each_row(block_of_each_row == 2);
+    test_groups       = group_id_of_each_row(block_of_each_row == 3);
+
+    group_overlap.validation_rows_with_group_in_training = sum(ismember(validation_groups, groups_in_training));
+    group_overlap.number_of_validation_rows = numel(validation_groups);
+    group_overlap.validation_fraction = group_overlap.validation_rows_with_group_in_training / group_overlap.number_of_validation_rows;
+
+    group_overlap.test_rows_with_group_in_training = sum(ismember(test_groups, groups_in_training));
+    group_overlap.number_of_test_rows = numel(test_groups);
+    group_overlap.test_fraction = group_overlap.test_rows_with_group_in_training / group_overlap.number_of_test_rows;
+end
+
+
+function split_comparison = compare_random_and_grouped_splits(concrete_features, split_fractions, comparison_seeds)
+    % Validation RMSE of simple models with a random and a grouped split.
+    %
+    % For every seed, both splits are built; a linear regression and a
+    % 1-nearest-neighbour model are fitted on training and evaluated on
+    % validation. If a grouped split gives clearly larger errors, the
+    % random split is optimistic because of the shared mixtures.
+    % Only training and validation rows are used.
+    %
+    % Parameters
+    % ----------
+    % concrete_features : struct
+    %     Output of preprocess_concrete_dataset (needs mixture_id_of_each_row).
+    % split_fractions : 1 x 3 double
+    % comparison_seeds : integer vector
+    %
+    % Returns
+    % -------
+    % split_comparison : struct (each field: one value per seed, MPa)
+    %     linear_rmse_random, linear_rmse_grouped,
+    %     nearest_neighbour_rmse_random, nearest_neighbour_rmse_grouped,
+    %     comparison_seeds
+
+    inputs = concrete_features.inputs;
+    target = concrete_features.target;
+    number_of_rows = size(inputs, 1);
+    number_of_seeds = numel(comparison_seeds);
+
+    linear_rmse_random             = zeros(1, number_of_seeds);
+    linear_rmse_grouped            = zeros(1, number_of_seeds);
+    nearest_neighbour_rmse_random  = zeros(1, number_of_seeds);
+    nearest_neighbour_rmse_grouped = zeros(1, number_of_seeds);
+
+    for seed_index = 1:number_of_seeds
+        current_seed = comparison_seeds(seed_index);
+
+        random_blocks  = assign_rows_to_random_blocks(number_of_rows, split_fractions, current_seed);
+        grouped_blocks = assign_groups_to_blocks(concrete_features.mixture_id_of_each_row, split_fractions, current_seed);
+
+        for split_kind = 1:2
+            if split_kind == 1
+                block_of_each_row = random_blocks;
+            else
+                block_of_each_row = grouped_blocks;
+            end
+
+            is_training   = (block_of_each_row == 1);
+            is_validation = (block_of_each_row == 2);
+
+            linear_coefficients = fit_linear_least_squares(inputs(is_training, :), target(is_training));
+            linear_prediction   = predict_linear_model(inputs(is_validation, :), linear_coefficients);
+            linear_rmse = compute_root_mean_squared_error(target(is_validation), linear_prediction);
+
+            neighbour_prediction = predict_nearest_neighbour(inputs(is_training, :), target(is_training), inputs(is_validation, :));
+            neighbour_rmse = compute_root_mean_squared_error(target(is_validation), neighbour_prediction);
+
+            if split_kind == 1
+                linear_rmse_random(seed_index)            = linear_rmse;
+                nearest_neighbour_rmse_random(seed_index) = neighbour_rmse;
+            else
+                linear_rmse_grouped(seed_index)            = linear_rmse;
+                nearest_neighbour_rmse_grouped(seed_index) = neighbour_rmse;
+            end
+        end
+    end
+
+    print_section_title(sprintf('CONCRETE - Step 4: random split versus split by mixture (%d seeds, validation only)', number_of_seeds));
+    fprintf('Validation RMSE (MPa), mean +/- std over seeds\n\n');
+    fprintf('%-26s %18s %18s\n', 'Model', 'Random split', 'Split by mixture');
+    fprintf('%-26s %10.2f +/- %4.2f %10.2f +/- %4.2f\n', 'Linear regression', mean(linear_rmse_random), std(linear_rmse_random), mean(linear_rmse_grouped), std(linear_rmse_grouped));
+    fprintf('%-26s %10.2f +/- %4.2f %10.2f +/- %4.2f\n', '1-nearest neighbour', mean(nearest_neighbour_rmse_random), std(nearest_neighbour_rmse_random), mean(nearest_neighbour_rmse_grouped), std(nearest_neighbour_rmse_grouped));
+
+    split_comparison.linear_rmse_random             = linear_rmse_random;
+    split_comparison.linear_rmse_grouped            = linear_rmse_grouped;
+    split_comparison.nearest_neighbour_rmse_random  = nearest_neighbour_rmse_random;
+    split_comparison.nearest_neighbour_rmse_grouped = nearest_neighbour_rmse_grouped;
+    split_comparison.comparison_seeds               = comparison_seeds;
+end
+
+
+function prediction = predict_nearest_neighbour(training_inputs, training_target, query_inputs)
+    % 1-nearest-neighbour regression on standardised inputs.
+    %
+    % Each query row gets the target of the closest training row
+    % (Euclidean distance after standardising with training statistics).
+    % It memorises the training set, so it benefits most from a query
+    % that is almost a copy of a training row (same mixture).
+    %
+    % Parameters
+    % ----------
+    % training_inputs : N x K double
+    % training_target : N x 1 double
+    % query_inputs : M x K double
+    %
+    % Returns
+    % -------
+    % prediction : M x 1 double
+
+    scaler = fit_standardization(training_inputs);
+    scaled_training = apply_standardization(training_inputs, scaler);
+    scaled_query    = apply_standardization(query_inputs, scaler);
+
+    number_of_training_rows = size(scaled_training, 1);
+    number_of_query_rows    = size(scaled_query, 1);
+
+    prediction = zeros(number_of_query_rows, 1);
+
+    for query_index = 1:number_of_query_rows
+        differences = scaled_training - repmat(scaled_query(query_index, :), number_of_training_rows, 1);
+        squared_distances = sum(differences .^ 2, 2);
+
+        [unused_smallest_distance, nearest_row] = min(squared_distances);
+        prediction(query_index) = training_target(nearest_row);
+    end
+end
+
+
+%% ========================================================================
+%  STEP 4 - DATA PARTITIONING: MELBOURNE
+%  Functions used only by the Melbourne dataset.
+%  ========================================================================
+
+function partition = partition_melbourne_dataset(melbourne_features)
+    % Chronological split of the Melbourne samples, with scaling and checks.
+    %
+    % Split
+    % -----
+    % Each sample goes to the block that contains its TARGET day, using
+    % the cutoffs already fixed in Step 3 (training 1981-1987, validation
+    % 1988-01-01 to 1989-07-01, test 1989-07-02 to 1990-12-31). Inputs
+    % always precede the target, so no training sample contains a
+    % validation or test value. The first validation samples use the last
+    % training days as lags, which is allowed (it is the past).
+    %
+    % Scaling
+    % -------
+    % The lags and the target are the same variable, so they share ONE
+    % mean and ONE standard deviation, computed from the training targets
+    % only (the training period). The sin and cos columns are already in
+    % [-1, 1] and are left unchanged (mean 0, standard deviation 1).
+    %
+    % Parameters
+    % ----------
+    % melbourne_features : struct
+    %     Output of preprocess_melbourne_dataset.
+    %
+    % Returns
+    % -------
+    % partition : struct
+    %     Output of build_partition + scale_partition, plus:
+    %     split_cutoffs, leakage_checks_passed (logical)
+
+    split_cutoffs = melbourne_features.split_cutoffs;
+    block_of_each_sample = assign_samples_to_chronological_blocks(melbourne_features.target_dates, split_cutoffs);
+
+    partition = build_partition(melbourne_features.inputs, melbourne_features.target, block_of_each_sample);
+
+    % ---- One scale for all temperature columns ----------------------------
+    temperature_scaler = fit_standardization(partition.training.target);
+
+    number_of_lag_columns = melbourne_features.number_of_lag_columns;
+    number_of_features    = size(melbourne_features.inputs, 2);
+    number_of_calendar_columns = number_of_features - number_of_lag_columns;
+
+    input_scaler.mean               = [repmat(temperature_scaler.mean, 1, number_of_lag_columns), zeros(1, number_of_calendar_columns)];
+    input_scaler.standard_deviation = [repmat(temperature_scaler.standard_deviation, 1, number_of_lag_columns), ones(1, number_of_calendar_columns)];
+
+    partition = scale_partition(partition, input_scaler, temperature_scaler);
+    partition.split_cutoffs = split_cutoffs;
+
+    % ---- Sizes and scaling check ------------------------------------------
+    print_section_title('MELBOURNE - Step 4: chronological split');
+    fprintf('Training   : targets %s to %s\n', datestr(min(melbourne_features.target_dates(block_of_each_sample == 1)), 'yyyy-mm-dd'), datestr(max(melbourne_features.target_dates(block_of_each_sample == 1)), 'yyyy-mm-dd'));
+    fprintf('Validation : targets %s to %s\n', datestr(min(melbourne_features.target_dates(block_of_each_sample == 2)), 'yyyy-mm-dd'), datestr(max(melbourne_features.target_dates(block_of_each_sample == 2)), 'yyyy-mm-dd'));
+    fprintf('Test       : targets %s to %s\n\n', datestr(min(melbourne_features.target_dates(block_of_each_sample == 3)), 'yyyy-mm-dd'), datestr(max(melbourne_features.target_dates(block_of_each_sample == 3)), 'yyyy-mm-dd'));
+
+    print_partition_summary(partition, 'degC');
+    fprintf('\nTemperature scale (lags and target) from training only: mean %.3f degC, std %.3f degC\n', temperature_scaler.mean, temperature_scaler.standard_deviation);
+    fprintf('Calendar columns (sin, cos): not scaled\n');
+
+    % ---- Leakage checks ----------------------------------------------------
+    last_training_input_date  = max(melbourne_features.last_input_dates(block_of_each_sample == 1));
+    last_training_target_date = max(melbourne_features.target_dates(block_of_each_sample == 1));
+    last_validation_target_date = max(melbourne_features.target_dates(block_of_each_sample == 2));
+
+    training_uses_only_training_days = (last_training_input_date < split_cutoffs.first_validation_date) && (last_training_target_date < split_cutoffs.first_validation_date);
+    validation_ends_before_test      = (last_validation_target_date < split_cutoffs.first_test_date);
+    blocks_are_in_time_order         = all(diff(block_of_each_sample(:)) >= 0);
+
+    print_section_title('MELBOURNE - Step 4: leakage checks');
+    print_check_result('Training inputs and targets end before the validation block', training_uses_only_training_days);
+    print_check_result('Validation targets end before the test block', validation_ends_before_test);
+    print_check_result('Blocks follow the time order (no shuffling)', blocks_are_in_time_order);
+    print_check_result('Scaler computed from training targets only', true);
+
+    partition.leakage_checks_passed = training_uses_only_training_days && validation_ends_before_test && blocks_are_in_time_order;
+end
+
+
+%% ========================================================================
+%  STEP 4 - DATA PARTITIONING: UTILS
+%  Functions used by both datasets (or generic helpers reused in later steps).
+%  ========================================================================
+
+function uniform_numbers = generate_uniform_random_numbers(seed, count)
+    % Reproducible uniform random numbers in (0, 1), identical in MATLAB and Octave.
+    %
+    % Uses the Park-Miller "minimal standard" generator:
+    %     state(k+1) = mod(16807 * state(k), 2^31 - 1),  u(k) = state(k) / (2^31 - 1)
+    % Every product is below 2^53, so the arithmetic is exact in double
+    % precision and both programs produce the same sequence. MATLAB's and
+    % Octave's rand give different numbers for the same seed, which would
+    % make the splits differ between the two programs.
+    %
+    % Parameters
+    % ----------
+    % seed : integer in 1 .. 2147483646
+    % count : integer, how many numbers to generate
+    %
+    % Returns
+    % -------
+    % uniform_numbers : count x 1 double
+
+    modulus    = 2147483647;
+    multiplier = 16807;
+
+    if seed < 1 || seed >= modulus || seed ~= round(seed)
+        error('generate_uniform_random_numbers:badSeed', 'seed must be an integer between 1 and %d, got %g.', modulus - 1, seed);
+    end
+
+    uniform_numbers = zeros(count, 1);
+    state = seed;
+
+    for number_index = 1:count
+        state = mod(multiplier * state, modulus);
+        uniform_numbers(number_index) = state / modulus;
+    end
+end
+
+
+function check_split_fractions(split_fractions)
+    % Stop with an error if the split fractions are not valid.
+    %
+    % Parameters
+    % ----------
+    % split_fractions : 1 x 3 double
+    %     Must be positive and sum to 1.
+
+    if numel(split_fractions) ~= 3 || any(split_fractions <= 0) || abs(sum(split_fractions) - 1) > 1e-9
+        error('check_split_fractions:badFractions', 'split_fractions must be 3 positive values summing to 1.');
+    end
+end
+
+
+function partition = build_partition(inputs, target, block_of_each_sample)
+    % Separate inputs and target into training, validation and test subsets.
+    %
+    % Parameters
+    % ----------
+    % inputs : N x K double (unscaled)
+    % target : N x 1 double (unscaled)
+    % block_of_each_sample : N x 1, values 1 (training), 2 (validation), 3 (test)
+    %
+    % Returns
+    % -------
+    % partition : struct with fields training, validation, test; each has
+    %     inputs      : unscaled inputs of the subset
+    %     target      : unscaled target of the subset
+    %     row_indices : rows of the original matrix that belong to the subset
+    % and block_of_each_sample (the input vector).
+
+    subset_names = {'training', 'validation', 'test'};
+
+    for block_number = 1:3
+        row_indices = find(block_of_each_sample == block_number);
+
+        subset.inputs      = inputs(row_indices, :);
+        subset.target      = target(row_indices);
+        subset.row_indices = row_indices;
+
+        partition.(subset_names{block_number}) = subset;
+    end
+
+    partition.block_of_each_sample = block_of_each_sample(:);
+end
+
+
+function partition = scale_partition(partition, input_scaler, target_scaler)
+    % Add scaled inputs and target to every subset of a partition.
+    %
+    % The scalers must have been fitted on the training subset only; the
+    % same scalers are applied to training, validation and test.
+    %
+    % Parameters
+    % ----------
+    % partition : struct
+    %     Output of build_partition.
+    % input_scaler, target_scaler : struct
+    %     Outputs of fit_standardization (or built with the same fields).
+    %
+    % Returns
+    % -------
+    % partition : struct
+    %     Same as the input, plus inputs_scaled and target_scaled in each
+    %     subset, and the fields input_scaler and target_scaler.
+
+    subset_names = {'training', 'validation', 'test'};
+
+    for subset_index = 1:3
+        name = subset_names{subset_index};
+
+        partition.(name).inputs_scaled = apply_standardization(partition.(name).inputs, input_scaler);
+        partition.(name).target_scaled = apply_standardization(partition.(name).target, target_scaler);
+    end
+
+    partition.input_scaler  = input_scaler;
+    partition.target_scaler = target_scaler;
+end
+
+
+function print_partition_summary(partition, target_unit)
+    % Print subset sizes, target statistics and a check of the scaling.
+    %
+    % After correct scaling, the training inputs and target have mean 0
+    % and standard deviation 1; validation and test are close to, but not
+    % exactly, 0 and 1 (they were scaled with training statistics).
+    %
+    % Parameters
+    % ----------
+    % partition : struct
+    %     Output of scale_partition.
+    % target_unit : char
+    %     Unit of the target, used in the printed table.
+
+    subset_names  = {'training', 'validation', 'test'};
+    subset_labels = {'Training', 'Validation', 'Test'};
+
+    number_of_samples = numel(partition.block_of_each_sample);
+
+    fprintf('%-11s %8s %8s %16s %16s %18s\n', 'Subset', 'Samples', 'Share', ['Target mean (' target_unit ')'], ['Target std (' target_unit ')'], 'Scaled target mean');
+
+    for subset_index = 1:3
+        subset = partition.(subset_names{subset_index});
+        fprintf('%-11s %8d %7.1f%% %16.2f %16.2f %18.3f\n', subset_labels{subset_index}, numel(subset.target), 100 * numel(subset.target) / number_of_samples, mean(subset.target), std(subset.target), mean(subset.target_scaled));
+    end
+
+    training_input_means = mean(partition.training.inputs_scaled, 1);
+    training_input_stds  = std(partition.training.inputs_scaled, 0, 1);
+
+    fprintf('\nScaled training inputs: largest |mean| = %.2e, std between %.3f and %.3f\n', max(abs(training_input_means)), min(training_input_stds), max(training_input_stds));
+end
+
+
+function print_check_result(description, check_passed)
+    % Print one line "OK" or "FAILED" for a verification.
+    %
+    % Parameters
+    % ----------
+    % description : char
+    % check_passed : logical
+
+    if check_passed
+        result_text = 'OK';
+    else
+        result_text = 'FAILED';
+    end
+
+    fprintf('  [%-6s] %s\n', result_text, description);
 end
