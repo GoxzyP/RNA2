@@ -1,0 +1,30 @@
+# ---- MATLAB / Octave temporary files ----------------------------------------
+*.asv
+*.m~
+*~
+octave-workspace
+octave-core
+*.autosave
+slprj/
+*.mex*
+
+# ---- Windows / macOS system files -------------------------------------------
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ---- Editors ----------------------------------------------------------------
+.vscode/
+.idea/
+
+# ---- Office lock / temporary files (report and slides) ---------------------
+~$*
+*.tmp
+
+# ---- Final ZIP for submission (built at the end, not versioned) ------------
+*.zip
+
+# ---- Datasets (download them from UCI / Kaggle) -----------------------------
+*.csv

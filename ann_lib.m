@@ -151,6 +151,18 @@ function L = ann_lib()
     L.check_gradient                         = @check_gradient;
     L.verify_gradients_for_all_architectures = @verify_gradients_for_all_architectures;
     L.run_training_smoke_test                = @run_training_smoke_test;
+    % ======================================================================
+    % STEP 6 - HYPERPARAMETER TUNING
+    % ======================================================================
+
+    % ---- UTILS (learning-rate tuning of mini-batch GD and Adam) ---------
+    L.tune_learning_rates              = @tune_learning_rates;
+    L.run_learning_rate_grid           = @run_learning_rate_grid;
+    L.select_learning_rate             = @select_learning_rate;
+    L.print_learning_rate_tuning_table = @print_learning_rate_tuning_table;
+    L.plot_learning_rate_tuning        = @plot_learning_rate_tuning;
+    L.print_bfgs_settings              = @print_bfgs_settings;
+
 end
 
 
@@ -4269,3 +4281,381 @@ function smoke_test_results = run_training_smoke_test(dataset_name, partition, o
         smoke_test_results(algorithm_index).seconds               = history.total_training_seconds;
     end
 end
+
+%% ========================================================================
+%  STEP 6 - HYPERPARAMETER TUNING: UTILS
+%  Learning-rate tuning of mini-batch GD and Adam on the validation set.
+%  ========================================================================
+
+function tuning_results = tune_learning_rates(dataset_name, partition, learning_rate_grids, tuning_seeds, options)
+    % Tune the learning rate of mini-batch GD and Adam for A, B and C.
+    %
+    % For every architecture and every algorithm, each learning rate of
+    % the grid is trained once per tuning seed. The score of one run is
+    % its best validation loss (the same model-selection rule used by the
+    % training functions). A run that diverges scores Inf: a learning
+    % rate that sometimes explodes is not safe for the 30 final runs.
+    % The chosen learning rate has the lowest MEDIAN score over the
+    % seeds (robust to one unlucky initialisation).
+    %
+    % Seed k gives the same initial weights to GD and Adam (paired), and
+    % is also the seed of the mini-batch order. The test set is not used.
+    %
+    % Parameters
+    % ----------
+    % dataset_name : char
+    %     Used in the printed titles.
+    % partition : struct
+    %     Output of partition_concrete_dataset or partition_melbourne_dataset.
+    % learning_rate_grids : struct
+    %     gd   : vector of learning rates for mini-batch GD (logarithmic grid)
+    %     adam : vector of learning rates for Adam (logarithmic grid)
+    % tuning_seeds : integer vector
+    %     One repetition per seed (at least 5).
+    % options : struct
+    %     See default_training_options (budget, batch size, Adam constants).
+    %
+    % Returns
+    % -------
+    % tuning_results : struct
+    %     dataset_name, tuning_seeds, budget_epoch_equivalents
+    %     architecture_names : 1 x 3 cell
+    %     layers             : 1 x 3 cell
+    %     algorithm_names    : {'Mini-batch GD', 'Adam'}
+    %     algorithm_codes    : {'gd', 'adam'}
+    %     learning_rate_grid : 1 x 2 cell, grid of each algorithm
+    %     validation_scores  : 3 x 2 cell, each (grid values x seeds),
+    %                          best validation loss (Inf if diverged)
+    %     diverged_runs      : 3 x 2 cell, each (grid values x seeds), logical
+    %     median_scores      : 3 x 2 cell, each (grid values x 1)
+    %     chosen_learning_rate : 3 x 2 double (row = architecture,
+    %                            column 1 = GD, column 2 = Adam)
+    %     chosen_on_grid_edge  : 3 x 2 logical
+    %     tuning_seconds       : 3 x 2 double, total training time
+
+    number_of_inputs = size(partition.training.inputs_scaled, 2);
+    architectures = build_architectures(number_of_inputs);
+
+    algorithm_codes = {'gd', 'adam'};
+    algorithm_names = {'Mini-batch GD', 'Adam'};
+    learning_rate_grid = {learning_rate_grids.gd(:)', learning_rate_grids.adam(:)'};
+
+    number_of_architectures = numel(architectures.layers);
+    number_of_algorithms    = numel(algorithm_codes);
+
+    % ---- Check the minimum required by the assignment --------------------
+    if numel(tuning_seeds) < 5
+        fprintf('WARNING: the assignment asks for at least 5 repetitions (got %d).\n', numel(tuning_seeds));
+    end
+
+    for algorithm_index = 1:number_of_algorithms
+        if numel(learning_rate_grid{algorithm_index}) < 6
+            fprintf('WARNING: the assignment asks for at least 6 learning rates (%s has %d).\n', ...
+                    algorithm_names{algorithm_index}, numel(learning_rate_grid{algorithm_index}));
+        end
+    end
+
+    % ---- Allocate the results --------------------------------------------
+    validation_scores    = cell(number_of_architectures, number_of_algorithms);
+    diverged_runs        = cell(number_of_architectures, number_of_algorithms);
+    median_scores        = cell(number_of_architectures, number_of_algorithms);
+    chosen_learning_rate = zeros(number_of_architectures, number_of_algorithms);
+    chosen_on_grid_edge  = false(number_of_architectures, number_of_algorithms);
+    tuning_seconds       = zeros(number_of_architectures, number_of_algorithms);
+
+    print_section_title(sprintf('%s - Step 6: learning-rate tuning (%d repetitions, %d epoch-equivalents)', ...
+                                dataset_name, numel(tuning_seeds), options.budget_epoch_equivalents));
+
+    % ---- Grid search -----------------------------------------------------
+    for architecture_index = 1:number_of_architectures
+        layers = architectures.layers{architecture_index};
+
+        for algorithm_index = 1:number_of_algorithms
+            fprintf('  %-12s | %-14s : %d learning rates x %d seeds ...\n', ...
+                    architectures.names{architecture_index}, algorithm_names{algorithm_index}, ...
+                    numel(learning_rate_grid{algorithm_index}), numel(tuning_seeds));
+
+            [score_matrix, diverged_matrix, total_seconds] = run_learning_rate_grid(layers, partition, ...
+                                                                                    algorithm_codes{algorithm_index}, ...
+                                                                                    learning_rate_grid{algorithm_index}, ...
+                                                                                    tuning_seeds, options);
+
+            [learning_rate, unused_chosen_index, median_of_each_rate, on_edge] = select_learning_rate(learning_rate_grid{algorithm_index}, score_matrix);
+
+            validation_scores{architecture_index, algorithm_index}    = score_matrix;
+            diverged_runs{architecture_index, algorithm_index}        = diverged_matrix;
+            median_scores{architecture_index, algorithm_index}        = median_of_each_rate;
+            chosen_learning_rate(architecture_index, algorithm_index) = learning_rate;
+            chosen_on_grid_edge(architecture_index, algorithm_index)  = on_edge;
+            tuning_seconds(architecture_index, algorithm_index)       = total_seconds;
+
+            fprintf('      chosen learning rate = %.4g   (%.1f s of training)\n', learning_rate, total_seconds);
+
+            if on_edge
+                fprintf('      WARNING: the chosen value is at the edge of the grid; consider extending the grid.\n');
+            end
+        end
+    end
+
+    % ---- Store everything ------------------------------------------------
+    tuning_results.dataset_name             = dataset_name;
+    tuning_results.tuning_seeds             = tuning_seeds;
+    tuning_results.budget_epoch_equivalents = options.budget_epoch_equivalents;
+    tuning_results.architecture_names       = architectures.names;
+    tuning_results.layers                   = architectures.layers;
+    tuning_results.algorithm_names          = algorithm_names;
+    tuning_results.algorithm_codes          = algorithm_codes;
+    tuning_results.learning_rate_grid       = learning_rate_grid;
+    tuning_results.validation_scores        = validation_scores;
+    tuning_results.diverged_runs            = diverged_runs;
+    tuning_results.median_scores            = median_scores;
+    tuning_results.chosen_learning_rate     = chosen_learning_rate;
+    tuning_results.chosen_on_grid_edge      = chosen_on_grid_edge;
+    tuning_results.tuning_seconds           = tuning_seconds;
+
+    print_learning_rate_tuning_table(tuning_results);
+end
+
+
+function [score_matrix, diverged_matrix, total_seconds] = run_learning_rate_grid(layers, partition, algorithm_code, learning_rate_grid, tuning_seeds, options)
+    % Train one architecture with one algorithm for every (rate, seed) pair.
+    %
+    % Parameters
+    % ----------
+    % layers : integer vector, [d, h1, ..., 1]
+    % partition : struct, output of a partition_* function
+    % algorithm_code : char, 'gd' or 'adam'
+    % learning_rate_grid : double vector
+    % tuning_seeds : integer vector
+    % options : struct, see default_training_options
+    %
+    % Returns
+    % -------
+    % score_matrix : (grid values x seeds) double
+    %     Best validation loss of each run (scaled units), Inf if diverged.
+    % diverged_matrix : (grid values x seeds) logical
+    % total_seconds : double, training time of all runs
+
+    training_inputs   = partition.training.inputs_scaled;
+    training_target   = partition.training.target_scaled;
+    validation_inputs = partition.validation.inputs_scaled;
+    validation_target = partition.validation.target_scaled;
+
+    number_of_rates = numel(learning_rate_grid);
+    number_of_seeds = numel(tuning_seeds);
+
+    score_matrix    = zeros(number_of_rates, number_of_seeds);
+    diverged_matrix = false(number_of_rates, number_of_seeds);
+    total_seconds   = 0;
+
+    for rate_index = 1:number_of_rates
+
+        options.learning_rate = learning_rate_grid(rate_index);
+
+        for seed_index = 1:number_of_seeds
+
+            seed = tuning_seeds(seed_index);
+
+            % Same seed -> same initial weights for GD and Adam (paired).
+            theta0 = init_params(layers, seed);
+            options.shuffle_seed = seed;
+
+            if strcmp(algorithm_code, 'gd')
+                [unused_theta, history] = train_minibatch_gd(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+            else
+                [unused_theta, history] = train_adam(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+            end
+
+            if history.diverged
+                score_matrix(rate_index, seed_index)    = Inf;
+                diverged_matrix(rate_index, seed_index) = true;
+            else
+                score_matrix(rate_index, seed_index) = history.best_validation_loss;
+            end
+
+            total_seconds = total_seconds + history.total_training_seconds;
+        end
+    end
+end
+
+
+function [chosen_learning_rate, chosen_index, median_of_each_rate, chosen_on_grid_edge] = select_learning_rate(learning_rate_grid, score_matrix)
+    % Choose the learning rate with the lowest median validation score.
+    %
+    % Diverged runs have score Inf, so a rate that diverges in most seeds
+    % gets an Inf median and is never chosen. If two rates tie, the first
+    % one in the grid is kept (the smaller one for an increasing grid).
+    %
+    % Parameters
+    % ----------
+    % learning_rate_grid : double vector
+    % score_matrix : (grid values x seeds) double, see run_learning_rate_grid
+    %
+    % Returns
+    % -------
+    % chosen_learning_rate : double
+    % chosen_index : integer, position of the chosen value in the grid
+    % median_of_each_rate : (grid values x 1) double
+    % chosen_on_grid_edge : logical, true if the best value is the first
+    %                       or the last of the grid (the optimum may lie
+    %                       outside the grid)
+
+    median_of_each_rate = median(score_matrix, 2);
+
+    [lowest_median, chosen_index] = min(median_of_each_rate);
+
+    if isinf(lowest_median)
+        fprintf('      WARNING: every learning rate diverged in most seeds.\n');
+    end
+
+    chosen_learning_rate = learning_rate_grid(chosen_index);
+    chosen_on_grid_edge  = (chosen_index == 1) || (chosen_index == numel(learning_rate_grid));
+end
+
+
+function print_learning_rate_tuning_table(tuning_results)
+    % Print the tuning results of one dataset, one block per combination.
+    %
+    % Parameters
+    % ----------
+    % tuning_results : struct, output of tune_learning_rates
+
+    print_section_title(sprintf('%s - Step 6: validation MSE (scaled) for each learning rate', tuning_results.dataset_name));
+
+    number_of_architectures = numel(tuning_results.architecture_names);
+    number_of_algorithms    = numel(tuning_results.algorithm_names);
+    number_of_seeds         = numel(tuning_results.tuning_seeds);
+
+    for architecture_index = 1:number_of_architectures
+        for algorithm_index = 1:number_of_algorithms
+
+            rates_in_grid   = tuning_results.learning_rate_grid{algorithm_index};
+            score_matrix    = tuning_results.validation_scores{architecture_index, algorithm_index};
+            diverged_matrix = tuning_results.diverged_runs{architecture_index, algorithm_index};
+            median_scores   = tuning_results.median_scores{architecture_index, algorithm_index};
+            chosen_rate     = tuning_results.chosen_learning_rate(architecture_index, algorithm_index);
+
+            fprintf('\n%s | %s\n', tuning_results.architecture_names{architecture_index}, tuning_results.algorithm_names{algorithm_index});
+            fprintf('%14s %14s %14s %14s %10s\n', 'Learning rate', 'Median', 'Best', 'Worst', 'Diverged');
+
+            for rate_index = 1:numel(rates_in_grid)
+
+                if rates_in_grid(rate_index) == chosen_rate
+                    marker = '  <-- chosen';
+                else
+                    marker = '';
+                end
+
+                fprintf('%14.4g %14.4f %14.4f %14.4f %7d/%d%s\n', rates_in_grid(rate_index), median_scores(rate_index), ...
+                        min(score_matrix(rate_index, :)), max(score_matrix(rate_index, :)), ...
+                        sum(diverged_matrix(rate_index, :)), number_of_seeds, marker);
+            end
+        end
+    end
+
+    % ---- Summary of the chosen values ------------------------------------
+    print_section_title(sprintf('%s - Step 6: chosen learning rates', tuning_results.dataset_name));
+    fprintf('%-14s %16s %16s\n', 'Architecture', tuning_results.algorithm_names{1}, tuning_results.algorithm_names{2});
+
+    for architecture_index = 1:number_of_architectures
+        fprintf('%-14s %16.4g %16.4g\n', tuning_results.architecture_names{architecture_index}, ...
+                tuning_results.chosen_learning_rate(architecture_index, 1), ...
+                tuning_results.chosen_learning_rate(architecture_index, 2));
+    end
+end
+
+
+function figure_handle = plot_learning_rate_tuning(tuning_results)
+    % Validation MSE against learning rate, one panel per architecture.
+    %
+    % Each dot is one repetition, the line is the median over the seeds
+    % and the star marks the chosen learning rate. Diverged runs (Inf)
+    % are not drawn; their number is in the printed table.
+    %
+    % Parameters
+    % ----------
+    % tuning_results : struct, output of tune_learning_rates
+    %
+    % Returns
+    % -------
+    % figure_handle : handle of the new figure
+
+    algorithm_colors = {[0 0.45 0.74], [0.85 0.33 0.10]};   % blue = GD, orange = Adam
+
+    number_of_architectures = numel(tuning_results.architecture_names);
+    number_of_algorithms    = numel(tuning_results.algorithm_names);
+    number_of_seeds         = numel(tuning_results.tuning_seeds);
+
+    figure_handle = figure('Position', [100 100 1300 420]);
+
+    for architecture_index = 1:number_of_architectures
+
+        subplot(1, number_of_architectures, architecture_index);
+        hold on;
+
+        legend_handles = zeros(1, number_of_algorithms);
+
+        for algorithm_index = 1:number_of_algorithms
+
+            rates_in_grid = tuning_results.learning_rate_grid{algorithm_index};
+            score_matrix  = tuning_results.validation_scores{architecture_index, algorithm_index};
+            median_scores = tuning_results.median_scores{architecture_index, algorithm_index};
+            chosen_rate   = tuning_results.chosen_learning_rate(architecture_index, algorithm_index);
+            color         = algorithm_colors{algorithm_index};
+
+            % Inf (diverged) is replaced by NaN so that it is not drawn.
+            score_matrix(isinf(score_matrix))   = NaN;
+            median_scores(isinf(median_scores)) = NaN;
+
+            % ---- One dot per repetition ---------------------------------
+            for seed_index = 1:number_of_seeds
+                plot(rates_in_grid, score_matrix(:, seed_index)', '.', 'Color', color, 'MarkerSize', 8);
+            end
+
+            % ---- Median line --------------------------------------------
+            legend_handles(algorithm_index) = plot(rates_in_grid, median_scores', '-o', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 5);
+
+            % ---- Chosen value -------------------------------------------
+            chosen_index = find(rates_in_grid == chosen_rate, 1);
+
+            if ~isnan(median_scores(chosen_index))
+                plot(chosen_rate, median_scores(chosen_index), 'p', 'Color', color, 'MarkerFaceColor', color, 'MarkerSize', 14);
+            end
+        end
+
+        set(gca, 'XScale', 'log', 'YScale', 'log');
+        grid on;
+        box on;
+
+        title(tuning_results.architecture_names{architecture_index});
+        xlabel('Learning rate');
+
+        if architecture_index == 1
+            ylabel('Best validation MSE (scaled units)');
+        end
+
+        legend(legend_handles, tuning_results.algorithm_names{:}, 'Location', 'Best');
+        hold off;
+    end
+end
+
+
+function print_bfgs_settings(options)
+    % Print the BFGS settings (BFGS has no learning rate to tune).
+    %
+    % Parameters
+    % ----------
+    % options : struct, see default_training_options
+
+    print_section_title('Step 6: BFGS settings (no learning rate)');
+
+    fprintf('Line search                 : backtracking with the Armijo condition\n');
+    fprintf('Initial step length         : 1\n');
+    fprintf('Armijo constant c1          : %g\n', options.bfgs_armijo_constant);
+    fprintf('Backtracking factor         : %g\n', options.bfgs_backtracking_factor);
+    fprintf('Max trials per line search  : %d\n', options.bfgs_maximum_line_search_evaluations);
+    fprintf('Curvature threshold (s''y)   : %g (update skipped below it)\n', options.bfgs_curvature_threshold);
+    fprintf('Gradient tolerance          : max |g| < %g\n', options.bfgs_gradient_tolerance);
+    fprintf('Budget                      : %d epoch-equivalents (line-search evaluations included)\n', options.budget_epoch_equivalents);
+end
+
