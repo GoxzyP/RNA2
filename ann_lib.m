@@ -128,6 +128,29 @@ function L = ann_lib()
     L.scale_partition                 = @scale_partition;
     L.print_partition_summary         = @print_partition_summary;
     L.print_check_result              = @print_check_result;
+    % ======================================================================
+    % STEP 5 - IMPLEMENTATION AND VERIFICATION
+    % ======================================================================
+
+    % ---- UTILS (network, training algorithms, metrics, gradient check) ---
+    L.build_architectures                    = @build_architectures;
+    L.set_random_seed                        = @set_random_seed;
+    L.init_params                            = @init_params;
+    L.pack_parameters                        = @pack_parameters;
+    L.unpack_parameters                      = @unpack_parameters;
+    L.predict_network                        = @predict_network;
+    L.compute_mse_loss                       = @compute_mse_loss;
+    L.loss_grad                              = @loss_grad;
+    L.default_training_options               = @default_training_options;
+    L.create_training_history                = @create_training_history;
+    L.train_minibatch_gd                     = @train_minibatch_gd;
+    L.train_adam                             = @train_adam;
+    L.train_with_minibatches                 = @train_with_minibatches;
+    L.train_bfgs                             = @train_bfgs;
+    L.compute_regression_metrics             = @compute_regression_metrics;
+    L.check_gradient                         = @check_gradient;
+    L.verify_gradients_for_all_architectures = @verify_gradients_for_all_architectures;
+    L.run_training_smoke_test                = @run_training_smoke_test;
 end
 
 
@@ -3427,4 +3450,822 @@ function print_check_result(description, check_passed)
     end
 
     fprintf('  [%-6s] %s\n', result_text, description);
+end
+
+
+%% ========================================================================
+%  STEP 5 - IMPLEMENTATION AND VERIFICATION: UTILS
+%  Functions used by both datasets: network, loss and gradient, the three
+%  training algorithms, metrics and the gradient check (bonus).
+%  ========================================================================
+%
+%  Conventions used by every function of this section
+%  ---------------------------------------------------
+%  layers : [d, h1, ..., hk, 1], number of neurons per layer, inputs first.
+%  theta  : column vector with all weights and biases, layer by layer:
+%           W1(:), b1, W2(:), b2, ... where Wl is fan_out x fan_in.
+%  inputs : N x d matrix (one sample per row); target : N x 1 vector.
+%  Hidden layers use tanh; the output neuron is linear; the loss is the
+%  mean squared error (MSE) = mean((prediction - target).^2).
+
+function architectures = build_architectures(number_of_inputs)
+    % Layer sizes of the three configurations of Section 3 (N = 10).
+    %
+    % Parameters
+    % ----------
+    % number_of_inputs : integer
+    %     Number d of input features.
+    %
+    % Returns
+    % -------
+    % architectures : struct
+    %     names  : 1 x 3 cell, {'A Reference', 'B Wide', 'C Deep'}
+    %     layers : 1 x 3 cell, layer-size vectors
+    %              A = [d 10 1], B = [d 100 1], C = [d 10 10 ... 10 1] (10 hidden)
+
+    reference_width = 10;
+
+    architectures.names  = {'A Reference', 'B Wide', 'C Deep'};
+    architectures.layers = {[number_of_inputs, reference_width, 1], [number_of_inputs, 10 * reference_width, 1], [number_of_inputs, reference_width * ones(1, 10), 1]};
+end
+
+
+function set_random_seed(seed)
+    % Seed the random number generators of MATLAB / Octave.
+    %
+    % rand('twister', seed) works in MATLAB R2007a and in GNU Octave. The
+    % two programs give different numbers for the same seed, but each one
+    % is reproducible, which is what the paired comparison needs.
+    %
+    % Parameters
+    % ----------
+    % seed : non-negative integer
+
+    rand('twister', seed);
+    randn('state', seed);
+end
+
+
+function theta = init_params(layers, seed)
+    % Glorot/Xavier uniform initialisation, identical for all architectures.
+    %
+    % W ~ U(-limit, limit) with limit = sqrt(6 / (fan_in + fan_out)), biases
+    % 0. The same seed gives the same initial weights, so run k of the three
+    % algorithms starts from the same point (paired comparison).
+    %
+    % Parameters
+    % ----------
+    % layers : integer vector, [d, h1, ..., 1]
+    % seed : non-negative integer
+    %
+    % Returns
+    % -------
+    % theta : P x 1 double, P = count_network_parameters(layers)
+
+    set_random_seed(seed);
+
+    number_of_layers = numel(layers) - 1;
+    weights = cell(1, number_of_layers);
+    biases  = cell(1, number_of_layers);
+
+    for layer_index = 1:number_of_layers
+        fan_in  = layers(layer_index);
+        fan_out = layers(layer_index + 1);
+
+        limit = sqrt(6 / (fan_in + fan_out));
+
+        weights{layer_index} = (2 * rand(fan_out, fan_in) - 1) * limit;
+        biases{layer_index}  = zeros(fan_out, 1);
+    end
+
+    theta = pack_parameters(weights, biases);
+end
+
+
+function theta = pack_parameters(weights, biases)
+    % Put the weight matrices and bias vectors in one column vector.
+    %
+    % Parameters
+    % ----------
+    % weights : 1 x L cell, weights{l} is fan_out x fan_in
+    % biases : 1 x L cell, biases{l} is fan_out x 1
+    %
+    % Returns
+    % -------
+    % theta : P x 1 double, [W1(:); b1; W2(:); b2; ...]
+
+    theta = [];
+
+    for layer_index = 1:numel(weights)
+        theta = [theta; weights{layer_index}(:); biases{layer_index}(:)];
+    end
+end
+
+
+function [weights, biases] = unpack_parameters(theta, layers)
+    % Inverse of pack_parameters.
+    %
+    % Parameters
+    % ----------
+    % theta : P x 1 double
+    % layers : integer vector, [d, h1, ..., 1]
+    %
+    % Returns
+    % -------
+    % weights : 1 x L cell, weights{l} is fan_out x fan_in
+    % biases : 1 x L cell, biases{l} is fan_out x 1
+
+    number_of_layers = numel(layers) - 1;
+    weights = cell(1, number_of_layers);
+    biases  = cell(1, number_of_layers);
+
+    offset = 0;
+
+    for layer_index = 1:number_of_layers
+        fan_in  = layers(layer_index);
+        fan_out = layers(layer_index + 1);
+
+        number_of_weights = fan_out * fan_in;
+        weights{layer_index} = reshape(theta(offset + 1:offset + number_of_weights), fan_out, fan_in);
+        offset = offset + number_of_weights;
+
+        biases{layer_index} = theta(offset + 1:offset + fan_out);
+        offset = offset + fan_out;
+    end
+end
+
+
+function prediction = predict_network(theta, layers, inputs)
+    % Forward pass: tanh hidden layers, linear output.
+    %
+    % Parameters
+    % ----------
+    % theta : P x 1 double
+    % layers : integer vector, [d, h1, ..., 1]
+    % inputs : N x d double
+    %
+    % Returns
+    % -------
+    % prediction : N x 1 double
+
+    [weights, biases] = unpack_parameters(theta, layers);
+
+    number_of_layers  = numel(weights);
+    number_of_samples = size(inputs, 1);
+
+    activation = inputs;
+
+    for layer_index = 1:number_of_layers - 1
+        activation = tanh(activation * weights{layer_index}' + repmat(biases{layer_index}', number_of_samples, 1));
+    end
+
+    prediction = activation * weights{number_of_layers}' + repmat(biases{number_of_layers}', number_of_samples, 1);
+end
+
+
+function loss = compute_mse_loss(theta, layers, inputs, target)
+    % Mean squared error of the network on a data set (no gradient).
+    %
+    % Parameters
+    % ----------
+    % theta : P x 1 double
+    % layers : integer vector
+    % inputs : N x d double
+    % target : N x 1 double
+    %
+    % Returns
+    % -------
+    % loss : double, mean((prediction - target).^2)
+
+    errors = predict_network(theta, layers, inputs) - target(:);
+
+    loss = mean(errors .^ 2);
+end
+
+
+function [loss, gradient] = loss_grad(theta, layers, inputs, target)
+    % MSE loss and its gradient with respect to all weights and biases.
+    %
+    % Backpropagation for tanh hidden layers and a linear output:
+    %   delta_L = 2 (prediction - target) / N
+    %   dW_l = delta_l' * a_(l-1),   db_l = sum of delta_l over samples
+    %   delta_(l-1) = (delta_l * W_l) .* (1 - a_(l-1).^2)
+    %
+    % Parameters
+    % ----------
+    % theta : P x 1 double
+    % layers : integer vector, [d, h1, ..., 1]
+    % inputs : N x d double
+    % target : N x 1 double
+    %
+    % Returns
+    % -------
+    % loss : double, MSE on (inputs, target)
+    % gradient : P x 1 double, same layout as theta
+
+    [weights, biases] = unpack_parameters(theta, layers);
+
+    number_of_layers  = numel(weights);
+    number_of_samples = size(inputs, 1);
+
+    % ---- Forward pass, keeping every layer's output --------------------
+    % activations{1} = inputs; activations{l+1} = output of hidden layer l.
+    activations = cell(1, number_of_layers);
+    activations{1} = inputs;
+
+    for layer_index = 1:number_of_layers - 1
+        activations{layer_index + 1} = tanh(activations{layer_index} * weights{layer_index}' + repmat(biases{layer_index}', number_of_samples, 1));
+    end
+
+    prediction = activations{number_of_layers} * weights{number_of_layers}' + repmat(biases{number_of_layers}', number_of_samples, 1);
+
+    errors = prediction - target(:);
+    loss = mean(errors .^ 2);
+
+    % ---- Backward pass --------------------------------------------------
+    weight_gradients = cell(1, number_of_layers);
+    bias_gradients   = cell(1, number_of_layers);
+
+    delta = 2 * errors / number_of_samples;
+
+    for layer_index = number_of_layers:-1:1
+        weight_gradients{layer_index} = delta' * activations{layer_index};
+        bias_gradients{layer_index}   = sum(delta, 1)';
+
+        if layer_index > 1
+            delta = (delta * weights{layer_index}) .* (1 - activations{layer_index} .^ 2);
+        end
+    end
+
+    gradient = pack_parameters(weight_gradients, bias_gradients);
+end
+
+
+function options = default_training_options()
+    % Default settings of the three training algorithms.
+    %
+    % Returns
+    % -------
+    % options : struct
+    %     budget_epoch_equivalents : computational budget, identical for
+    %                                all algorithms of a dataset (1000)
+    %     batch_size               : 32, same for mini-batch GD and Adam
+    %     learning_rate            : placeholder, tuned in Step 6
+    %     shuffle_seed             : seed of the mini-batch order
+    %     adam_beta1, adam_beta2, adam_epsilon : 0.9, 0.999, 1e-8
+    %     bfgs_gradient_tolerance  : stop when max |gradient| < 1e-6
+    %     bfgs_armijo_constant     : c1 = 1e-4 (sufficient decrease)
+    %     bfgs_backtracking_factor : step multiplied by 0.5 after each
+    %                                rejected trial
+    %     bfgs_maximum_line_search_evaluations : 20 trials per iteration
+    %     bfgs_curvature_threshold : skip the update when s'y <= 1e-10
+    %     verbose                  : print progress (false)
+
+    options.budget_epoch_equivalents = 1000;
+    options.batch_size               = 32;
+    options.learning_rate            = 0.01;
+    options.shuffle_seed             = 1;
+
+    options.adam_beta1   = 0.9;
+    options.adam_beta2   = 0.999;
+    options.adam_epsilon = 1e-8;
+
+    options.bfgs_gradient_tolerance              = 1e-6;
+    options.bfgs_armijo_constant                 = 1e-4;
+    options.bfgs_backtracking_factor             = 0.5;
+    options.bfgs_maximum_line_search_evaluations = 20;
+    options.bfgs_curvature_threshold             = 1e-10;
+
+    options.verbose = false;
+end
+
+
+function history = create_training_history(budget_epoch_equivalents)
+    % Empty history with one slot per epoch-equivalent.
+    %
+    % Slot k holds the state after k epoch-equivalents (one pass over the
+    % training set for GD/Adam, one full-batch gradient evaluation for
+    % BFGS, line-search evaluations included), so the curves of the three
+    % algorithms share the same horizontal axis.
+    %
+    % Parameters
+    % ----------
+    % budget_epoch_equivalents : integer
+    %
+    % Returns
+    % -------
+    % history : struct
+    %     epoch_equivalents   : (1:budget)'
+    %     training_loss       : budget x 1, NaN until filled (scaled units)
+    %     validation_loss     : budget x 1, NaN until filled (scaled units)
+    %     elapsed_seconds     : budget x 1, cumulative training time
+    %     initial_training_loss, initial_validation_loss : at theta0
+    %     best_validation_loss, best_epoch_equivalent : model selection
+    %     gradient_evaluations : full-dataset gradient evaluations used
+    %     total_training_seconds, diverged, stop_reason
+
+    history.epoch_equivalents = (1:budget_epoch_equivalents)';
+    history.training_loss     = NaN(budget_epoch_equivalents, 1);
+    history.validation_loss   = NaN(budget_epoch_equivalents, 1);
+    history.elapsed_seconds   = NaN(budget_epoch_equivalents, 1);
+
+    history.initial_training_loss   = NaN;
+    history.initial_validation_loss = NaN;
+    history.best_validation_loss    = Inf;
+    history.best_epoch_equivalent   = 0;
+    history.gradient_evaluations    = 0;
+    history.total_training_seconds  = 0;
+    history.diverged    = false;
+    history.stop_reason = 'budget reached';
+end
+
+
+function [best_theta, history] = train_minibatch_gd(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options)
+    % Mini-batch gradient descent: theta <- theta - learning_rate * g.
+    %
+    % g is the gradient of the MSE on a mini-batch of options.batch_size
+    % samples; the samples are reshuffled at every epoch. One epoch = one
+    % epoch-equivalent = one full-dataset gradient evaluation. After each
+    % epoch the training and validation losses are recorded; the
+    % parameters with the lowest validation loss are returned. If the loss
+    % becomes Inf or NaN, the run stops and is marked as diverged.
+    %
+    % Parameters
+    % ----------
+    % theta0 : P x 1 double, initial parameters (from init_params)
+    % layers : integer vector
+    % training_inputs, training_target : scaled training data
+    % validation_inputs, validation_target : scaled validation data
+    % options : struct, see default_training_options
+    %     (uses budget_epoch_equivalents, batch_size, learning_rate,
+    %     shuffle_seed)
+    %
+    % Returns
+    % -------
+    % best_theta : P x 1 double, parameters with the lowest validation loss
+    % history : struct, see create_training_history
+
+    [best_theta, history] = train_with_minibatches(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options, 'gd');
+end
+
+
+function [best_theta, history] = train_adam(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options)
+    % Adam: first and second moment estimates with bias correction.
+    %
+    % For every mini-batch gradient g (update counter t):
+    %   m = beta1 m + (1 - beta1) g
+    %   v = beta2 v + (1 - beta2) g.^2
+    %   theta <- theta - learning_rate * (m / (1 - beta1^t)) ./ (sqrt(v / (1 - beta2^t)) + epsilon)
+    % Mini-batches, recording and model selection as in train_minibatch_gd.
+    %
+    % Parameters
+    % ----------
+    % Same as train_minibatch_gd; also uses adam_beta1, adam_beta2 and
+    % adam_epsilon from options.
+    %
+    % Returns
+    % -------
+    % best_theta : P x 1 double
+    % history : struct, see create_training_history
+
+    [best_theta, history] = train_with_minibatches(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options, 'adam');
+end
+
+
+function [best_theta, history] = train_with_minibatches(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options, update_rule)
+    % Shared loop of mini-batch GD and Adam (they differ only in the update).
+    %
+    % Parameters
+    % ----------
+    % theta0, layers, training_*, validation_*, options : see train_minibatch_gd
+    % update_rule : char, 'gd' or 'adam'
+    %
+    % Returns
+    % -------
+    % best_theta : P x 1 double
+    % history : struct, see create_training_history
+
+    budget = options.budget_epoch_equivalents;
+    batch_size = options.batch_size;
+    learning_rate = options.learning_rate;
+    number_of_samples = size(training_inputs, 1);
+
+    history = create_training_history(budget);
+
+    theta = theta0;
+    best_theta = theta0;
+
+    history.initial_training_loss   = compute_mse_loss(theta0, layers, training_inputs, training_target);
+    history.initial_validation_loss = compute_mse_loss(theta0, layers, validation_inputs, validation_target);
+    history.best_validation_loss    = history.initial_validation_loss;
+
+    % Adam state
+    first_moment  = zeros(size(theta0));
+    second_moment = zeros(size(theta0));
+    update_counter = 0;
+
+    % The mini-batch order depends only on the run's shuffle seed.
+    set_random_seed(options.shuffle_seed);
+
+    training_seconds = 0;
+
+    for epoch = 1:budget
+        epoch_start = clock;
+
+        [unused_sorted, sample_order] = sort(rand(number_of_samples, 1));
+
+        for batch_start = 1:batch_size:number_of_samples
+            batch_rows = sample_order(batch_start:min(batch_start + batch_size - 1, number_of_samples));
+
+            [unused_batch_loss, gradient] = loss_grad(theta, layers, training_inputs(batch_rows, :), training_target(batch_rows));
+
+            if strcmp(update_rule, 'gd')
+                theta = theta - learning_rate * gradient;
+            else
+                update_counter = update_counter + 1;
+                first_moment  = options.adam_beta1 * first_moment  + (1 - options.adam_beta1) * gradient;
+                second_moment = options.adam_beta2 * second_moment + (1 - options.adam_beta2) * gradient .^ 2;
+
+                corrected_first_moment  = first_moment  / (1 - options.adam_beta1 ^ update_counter);
+                corrected_second_moment = second_moment / (1 - options.adam_beta2 ^ update_counter);
+
+                theta = theta - learning_rate * corrected_first_moment ./ (sqrt(corrected_second_moment) + options.adam_epsilon);
+            end
+        end
+
+        training_seconds = training_seconds + etime(clock, epoch_start);
+
+        % ---- Record (monitoring time is not counted as training time) ---
+        training_loss   = compute_mse_loss(theta, layers, training_inputs, training_target);
+        validation_loss = compute_mse_loss(theta, layers, validation_inputs, validation_target);
+
+        history.training_loss(epoch)   = training_loss;
+        history.validation_loss(epoch) = validation_loss;
+        history.elapsed_seconds(epoch) = training_seconds;
+        history.gradient_evaluations   = epoch;
+
+        if ~isfinite(training_loss) || ~isfinite(validation_loss)
+            history.diverged = true;
+            history.stop_reason = sprintf('diverged at epoch %d', epoch);
+            break;
+        end
+
+        if validation_loss < history.best_validation_loss
+            history.best_validation_loss  = validation_loss;
+            history.best_epoch_equivalent = epoch;
+            best_theta = theta;
+        end
+
+        if options.verbose && mod(epoch, 100) == 0
+            fprintf('    %s epoch %4d: training %.4f, validation %.4f\n', update_rule, epoch, training_loss, validation_loss);
+        end
+    end
+
+    history.total_training_seconds = training_seconds;
+end
+
+
+function [best_theta, history] = train_bfgs(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options)
+    % BFGS quasi-Newton method on the full training set.
+    %
+    % Search direction p = -H g, where H approximates the INVERSE Hessian.
+    % Line search: backtracking with the Armijo condition
+    %     f(theta + alpha p) <= f(theta) + c1 alpha g'p,
+    % starting at alpha = 1 and multiplying alpha by the backtracking
+    % factor after each rejected trial (at most a fixed number of trials).
+    % Inverse-Hessian update (s = step, y = change of gradient, rho = 1/(y's)):
+    %     H <- (I - rho s y') H (I - rho y s') + rho s s'
+    % applied only when y's > curvature threshold (keeps H positive
+    % definite); before the first update H is scaled by (y's)/(y'y).
+    % If p is not a descent direction or the line search fails, H is reset
+    % to the identity.
+    %
+    % Cost accounting: every evaluation of loss and gradient on the full
+    % training set (initial point and every line-search trial) uses one
+    % epoch-equivalent. The run stops when the budget is used or when
+    % max |g| < gradient tolerance; in that case the remaining slots of
+    % the history keep the last values (the parameters no longer change).
+    %
+    % Parameters
+    % ----------
+    % Same as train_minibatch_gd; uses budget_epoch_equivalents and the
+    % bfgs_* fields of options (no learning rate).
+    %
+    % Returns
+    % -------
+    % best_theta : P x 1 double, parameters with the lowest validation loss
+    % history : struct, see create_training_history, plus
+    %     number_of_iterations, skipped_updates, failed_line_searches
+
+    budget = options.budget_epoch_equivalents;
+    number_of_parameters = numel(theta0);
+
+    history = create_training_history(budget);
+    history.number_of_iterations = 0;
+    history.skipped_updates      = 0;
+    history.failed_line_searches = 0;
+
+    training_seconds = 0;
+    iteration_start = clock;
+
+    theta = theta0;
+    [loss, gradient] = loss_grad(theta, layers, training_inputs, training_target);
+    evaluations_used = 1;
+
+    inverse_hessian = eye(number_of_parameters);
+    hessian_was_scaled = false;
+
+    training_seconds = training_seconds + etime(clock, iteration_start);
+
+    best_theta = theta0;
+    history.initial_training_loss   = loss;
+    history.initial_validation_loss = compute_mse_loss(theta0, layers, validation_inputs, validation_target);
+    history.best_validation_loss    = history.initial_validation_loss;
+
+    history.training_loss(1)   = loss;
+    history.validation_loss(1) = history.initial_validation_loss;
+    history.elapsed_seconds(1) = training_seconds;
+
+    while evaluations_used < budget
+
+        if max(abs(gradient)) < options.bfgs_gradient_tolerance
+            history.stop_reason = sprintf('gradient tolerance reached after %d evaluations', evaluations_used);
+            break;
+        end
+
+        iteration_start = clock;
+        evaluations_before_iteration = evaluations_used;
+
+        % ---- Search direction ---------------------------------------------
+        direction = -inverse_hessian * gradient;
+        slope = gradient' * direction;
+
+        if slope >= 0
+            inverse_hessian = eye(number_of_parameters);
+            direction = -gradient;
+            slope = gradient' * direction;
+        end
+
+        % ---- Backtracking line search (Armijo) -----------------------------
+        step_length = 1;
+        step_accepted = false;
+        line_search_evaluations = 0;
+
+        while evaluations_used < budget && line_search_evaluations < options.bfgs_maximum_line_search_evaluations
+            trial_theta = theta + step_length * direction;
+            [trial_loss, trial_gradient] = loss_grad(trial_theta, layers, training_inputs, training_target);
+
+            evaluations_used = evaluations_used + 1;
+            line_search_evaluations = line_search_evaluations + 1;
+
+            if isfinite(trial_loss) && trial_loss <= loss + options.bfgs_armijo_constant * step_length * slope
+                step_accepted = true;
+                break;
+            end
+
+            step_length = step_length * options.bfgs_backtracking_factor;
+        end
+
+        % ---- Update of theta and of the inverse Hessian --------------------
+        if step_accepted
+            step = trial_theta - theta;
+            gradient_change = trial_gradient - gradient;
+            curvature = step' * gradient_change;
+
+            theta = trial_theta;
+            loss = trial_loss;
+            gradient = trial_gradient;
+
+            if curvature > options.bfgs_curvature_threshold
+                if ~hessian_was_scaled
+                    inverse_hessian = (curvature / (gradient_change' * gradient_change)) * eye(number_of_parameters);
+                    hessian_was_scaled = true;
+                end
+
+                rho = 1 / curvature;
+                hessian_times_change = inverse_hessian * gradient_change;
+
+                inverse_hessian = inverse_hessian - rho * (step * hessian_times_change' + hessian_times_change * step') + (rho ^ 2 * (gradient_change' * hessian_times_change) + rho) * (step * step');
+            else
+                history.skipped_updates = history.skipped_updates + 1;
+            end
+        else
+            inverse_hessian = eye(number_of_parameters);
+            history.failed_line_searches = history.failed_line_searches + 1;
+        end
+
+        history.number_of_iterations = history.number_of_iterations + 1;
+        training_seconds = training_seconds + etime(clock, iteration_start);
+
+        % ---- Record: the slots used by this iteration get the new state ----
+        validation_loss = compute_mse_loss(theta, layers, validation_inputs, validation_target);
+        slots = (evaluations_before_iteration + 1):evaluations_used;
+
+        history.training_loss(slots)   = loss;
+        history.validation_loss(slots) = validation_loss;
+        history.elapsed_seconds(slots) = training_seconds;
+
+        if validation_loss < history.best_validation_loss
+            history.best_validation_loss  = validation_loss;
+            history.best_epoch_equivalent = evaluations_used;
+            best_theta = theta;
+        end
+
+        if options.verbose && mod(history.number_of_iterations, 50) == 0
+            fprintf('    bfgs iteration %4d (%4d evaluations): training %.4f, validation %.4f\n', history.number_of_iterations, evaluations_used, loss, validation_loss);
+        end
+    end
+
+    % Early stop: the parameters stay the same until the end of the budget.
+    if evaluations_used < budget
+        remaining_slots = (evaluations_used + 1):budget;
+        history.training_loss(remaining_slots)   = history.training_loss(evaluations_used);
+        history.validation_loss(remaining_slots) = history.validation_loss(evaluations_used);
+        history.elapsed_seconds(remaining_slots) = history.elapsed_seconds(evaluations_used);
+    end
+
+    history.gradient_evaluations   = evaluations_used;
+    history.total_training_seconds = training_seconds;
+end
+
+
+function metrics = compute_regression_metrics(observed_values, predicted_values)
+    % MSE, RMSE, MAE and R^2 (use values in the ORIGINAL unit of the target).
+    %
+    % Parameters
+    % ----------
+    % observed_values, predicted_values : double vectors of the same length
+    %
+    % Returns
+    % -------
+    % metrics : struct
+    %     mse  : mean((observed - predicted).^2)
+    %     rmse : sqrt(mse), in the unit of the target
+    %     mae  : mean(|observed - predicted|), in the unit of the target
+    %     r2   : 1 - sum of squared errors / sum of squares around the mean
+
+    observed_values  = observed_values(:);
+    predicted_values = predicted_values(:);
+
+    errors = observed_values - predicted_values;
+
+    metrics.mse  = mean(errors .^ 2);
+    metrics.rmse = sqrt(metrics.mse);
+    metrics.mae  = mean(abs(errors));
+    metrics.r2   = 1 - sum(errors .^ 2) / sum((observed_values - mean(observed_values)) .^ 2);
+end
+
+
+function gradient_check = check_gradient(theta, layers, inputs, target, finite_difference_step)
+    % Compare the backpropagation gradient with central finite differences.
+    %
+    % For every parameter i:
+    %   numerical_i = (loss(theta + h e_i) - loss(theta - h e_i)) / (2 h)
+    %   relative error_i = |analytical_i - numerical_i| / max(|analytical_i| + |numerical_i|, 1e-8)
+    % The floor 1e-8 avoids dividing by ~0 for parameters whose gradient is
+    % practically zero; for those parameters the relative error is still
+    % inflated by rounding, so the global relative error (norm of the
+    % difference) is also reported. Values around 1e-7 or smaller, with
+    % absolute errors near 1e-10, mean the analytical gradient is correct.
+    %
+    % Parameters
+    % ----------
+    % theta : P x 1 double
+    % layers : integer vector
+    % inputs : N x d double (a small subset is enough)
+    % target : N x 1 double
+    % finite_difference_step : double, h (e.g. 1e-5)
+    %
+    % Returns
+    % -------
+    % gradient_check : struct
+    %     maximum_relative_error : largest per-parameter relative error
+    %     global_relative_error  : norm(analytical - numerical) /
+    %                              (norm(analytical) + norm(numerical)),
+    %                              not affected by parameters whose
+    %                              gradient is almost zero
+    %     maximum_absolute_error, number_of_parameters
+
+    [unused_loss, analytical_gradient] = loss_grad(theta, layers, inputs, target);
+
+    number_of_parameters = numel(theta);
+    numerical_gradient = zeros(number_of_parameters, 1);
+
+    for parameter_index = 1:number_of_parameters
+        theta_plus  = theta;
+        theta_minus = theta;
+        theta_plus(parameter_index)  = theta_plus(parameter_index)  + finite_difference_step;
+        theta_minus(parameter_index) = theta_minus(parameter_index) - finite_difference_step;
+
+        numerical_gradient(parameter_index) = (compute_mse_loss(theta_plus, layers, inputs, target) - compute_mse_loss(theta_minus, layers, inputs, target)) / (2 * finite_difference_step);
+    end
+
+    absolute_errors = abs(analytical_gradient - numerical_gradient);
+    relative_errors = absolute_errors ./ max(abs(analytical_gradient) + abs(numerical_gradient), 1e-8);
+
+    gradient_check.maximum_relative_error = max(relative_errors);
+    gradient_check.global_relative_error  = norm(analytical_gradient - numerical_gradient) / (norm(analytical_gradient) + norm(numerical_gradient));
+    gradient_check.maximum_absolute_error = max(absolute_errors);
+    gradient_check.number_of_parameters   = number_of_parameters;
+end
+
+
+function gradient_checks = verify_gradients_for_all_architectures(dataset_name, partition, number_of_samples, seed, finite_difference_step)
+    % Run check_gradient for architectures A, B and C on one dataset (bonus).
+    %
+    % Uses the first number_of_samples rows of the scaled training set and
+    % the initial weights init_params(layers, seed).
+    %
+    % Parameters
+    % ----------
+    % dataset_name : char, used in the printed title
+    % partition : struct, output of partition_concrete_dataset or
+    %             partition_melbourne_dataset
+    % number_of_samples : integer
+    % seed : integer, seed of the initial weights
+    % finite_difference_step : double
+    %
+    % Returns
+    % -------
+    % gradient_checks : 1 x 3 struct array, outputs of check_gradient
+
+    inputs = partition.training.inputs_scaled(1:number_of_samples, :);
+    target = partition.training.target_scaled(1:number_of_samples);
+
+    architectures = build_architectures(size(inputs, 2));
+
+    print_section_title(sprintf('%s - Step 5: gradient check (%d samples, h = %g)', dataset_name, number_of_samples, finite_difference_step));
+    fprintf('%-14s %11s %20s %22s %20s\n', 'Architecture', 'Parameters', 'Max relative error', 'Global relative error', 'Max absolute error');
+
+    for architecture_index = 1:3
+        layers = architectures.layers{architecture_index};
+        theta = init_params(layers, seed);
+
+        result = check_gradient(theta, layers, inputs, target, finite_difference_step);
+        gradient_checks(architecture_index) = result;
+
+        fprintf('%-14s %11d %20.3e %22.3e %20.3e\n', architectures.names{architecture_index}, result.number_of_parameters, result.maximum_relative_error, result.global_relative_error, result.maximum_absolute_error);
+    end
+end
+
+
+function smoke_test_results = run_training_smoke_test(dataset_name, partition, options)
+    % Short training of architecture A with the three algorithms.
+    %
+    % Only checks that every algorithm runs and lowers the loss; it is not
+    % an experiment (the learning rates are tuned in Step 6 and the final
+    % runs are in Step 7). The test set is not used.
+    %
+    % Parameters
+    % ----------
+    % dataset_name : char
+    % partition : struct, output of a partition_* function
+    % options : struct, see default_training_options (a small budget is
+    %           enough); options.learning_rate_gd and
+    %           options.learning_rate_adam give the learning rates, and
+    %           options.shuffle_seed is used both for the initial weights
+    %           and for the mini-batch order
+    %
+    % Returns
+    % -------
+    % smoke_test_results : 1 x 3 struct array with fields algorithm,
+    %     initial_training_loss, final_training_loss,
+    %     best_validation_loss, gradient_evaluations, seconds
+
+    architectures = build_architectures(size(partition.training.inputs_scaled, 2));
+    layers = architectures.layers{1};
+    theta0 = init_params(layers, options.shuffle_seed);
+
+    training_inputs   = partition.training.inputs_scaled;
+    training_target   = partition.training.target_scaled;
+    validation_inputs = partition.validation.inputs_scaled;
+    validation_target = partition.validation.target_scaled;
+
+    algorithm_names = {'Mini-batch GD', 'BFGS', 'Adam'};
+
+    print_section_title(sprintf('%s - Step 5: smoke test (architecture A, %d epoch-equivalents)', dataset_name, options.budget_epoch_equivalents));
+    fprintf('%-14s %14s %14s %16s %12s %10s\n', 'Algorithm', 'Initial train', 'Final train', 'Best validation', 'Grad. evals', 'Seconds');
+
+    for algorithm_index = 1:3
+        if algorithm_index == 1
+            options.learning_rate = options.learning_rate_gd;
+            [unused_theta, history] = train_minibatch_gd(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+        elseif algorithm_index == 2
+            [unused_theta, history] = train_bfgs(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+        else
+            options.learning_rate = options.learning_rate_adam;
+            [unused_theta, history] = train_adam(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+        end
+
+        final_training_loss = history.training_loss(find(~isnan(history.training_loss), 1, 'last'));
+
+        fprintf('%-14s %14.4f %14.4f %16.4f %12d %10.2f\n', algorithm_names{algorithm_index}, history.initial_training_loss, final_training_loss, history.best_validation_loss, history.gradient_evaluations, history.total_training_seconds);
+
+        smoke_test_results(algorithm_index).algorithm             = algorithm_names{algorithm_index};
+        smoke_test_results(algorithm_index).initial_training_loss = history.initial_training_loss;
+        smoke_test_results(algorithm_index).final_training_loss   = final_training_loss;
+        smoke_test_results(algorithm_index).best_validation_loss  = history.best_validation_loss;
+        smoke_test_results(algorithm_index).gradient_evaluations  = history.gradient_evaluations;
+        smoke_test_results(algorithm_index).seconds               = history.total_training_seconds;
+    end
 end

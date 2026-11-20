@@ -9,6 +9,7 @@
 % Step 2 - Exploratory data analysis (tables printed, figures saved).
 % Step 3 - Preprocessing and feature engineering.
 % Step 4 - Data partitioning (and scaling with training statistics).
+% Step 5 - Implementation and verification (gradient check, smoke test).
 %
 % How to run
 % ----------
@@ -91,3 +92,34 @@ concrete_partition = L.partition_concrete_dataset(concrete_features, concrete_sp
 
 % ---- Melbourne: chronological blocks fixed in Step 3 ----------------------
 melbourne_partition = L.partition_melbourne_dataset(melbourne_features);
+
+
+%% ========================================================================
+%  STEP 5 - IMPLEMENTATION AND VERIFICATION
+%  ========================================================================
+%
+% The library (network, loss_grad, mini-batch GD, BFGS, Adam, metrics) is
+% in ann_lib.m. Here it is only verified:
+%   1. Bonus: analytical gradient against central finite differences for
+%      architectures A, B and C on both datasets.
+%   2. Smoke test: a short training of architecture A with the three
+%      algorithms, to check that each one runs and lowers the loss. The
+%      learning rates here are provisional; they are tuned in Step 6.
+
+% ---- 1. Gradient check (bonus) ---------------------------------------------
+gradient_check_samples = 50;     % first 50 training rows
+gradient_check_seed    = 42;     % seed of the initial weights (training seed of the assignment)
+finite_difference_step = 1e-5;
+
+concrete_gradient_checks  = L.verify_gradients_for_all_architectures('CONCRETE', concrete_partition, gradient_check_samples, gradient_check_seed, finite_difference_step);
+melbourne_gradient_checks = L.verify_gradients_for_all_architectures('MELBOURNE', melbourne_partition, gradient_check_samples, gradient_check_seed, finite_difference_step);
+
+% ---- 2. Smoke test of the three algorithms ---------------------------------
+smoke_test_options = L.default_training_options();
+smoke_test_options.budget_epoch_equivalents = 50;
+smoke_test_options.shuffle_seed = 42;               % initial weights and mini-batch order
+smoke_test_options.learning_rate_gd   = 0.05;    % provisional (Step 6 tunes it)
+smoke_test_options.learning_rate_adam = 0.005;   % provisional (Step 6 tunes it)
+
+concrete_smoke_test  = L.run_training_smoke_test('CONCRETE', concrete_partition, smoke_test_options);
+melbourne_smoke_test = L.run_training_smoke_test('MELBOURNE', melbourne_partition, smoke_test_options);
