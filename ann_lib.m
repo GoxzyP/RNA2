@@ -162,6 +162,30 @@ function L = ann_lib()
     L.print_learning_rate_tuning_table = @print_learning_rate_tuning_table;
     L.plot_learning_rate_tuning        = @plot_learning_rate_tuning;
     L.print_bfgs_settings              = @print_bfgs_settings;
+    % ======================================================================
+    % STEP 7 - FINAL EXPERIMENTS
+    % ======================================================================
+
+    % ---- UTILS (18 combinations x 30 runs, test metrics) -----------------
+    L.run_final_experiments          = @run_final_experiments;
+    L.run_one_combination            = @run_one_combination;
+    L.evaluate_on_test_set           = @evaluate_on_test_set;
+    L.print_final_experiment_summary = @print_final_experiment_summary;
+    % ======================================================================
+    % STEP 8 - REQUIRED RESULTS
+    % ======================================================================
+
+    % ---- UTILS (tables, figures and reference models) --------------------
+    L.compute_reference_models    = @compute_reference_models;
+    L.produce_step8_results       = @produce_step8_results;
+    L.print_step8_summary_table   = @print_step8_summary_table;
+    L.compute_curve_quantiles     = @compute_curve_quantiles;
+    L.plot_training_progress      = @plot_training_progress;
+    L.plot_test_error_box_plots   = @plot_test_error_box_plots;
+    L.select_representative_run   = @select_representative_run;
+    L.plot_concrete_predictions   = @plot_concrete_predictions;
+    L.plot_melbourne_predictions  = @plot_melbourne_predictions;
+    L.draw_residual_histograms    = @draw_residual_histograms;
 
 end
 
@@ -4658,4 +4682,966 @@ function print_bfgs_settings(options)
     fprintf('Gradient tolerance          : max |g| < %g\n', options.bfgs_gradient_tolerance);
     fprintf('Budget                      : %d epoch-equivalents (line-search evaluations included)\n', options.budget_epoch_equivalents);
 end
+
+%% ========================================================================
+%  STEP 7 - FINAL EXPERIMENTS: UTILS
+%  3 architectures x 3 algorithms x 30 runs per dataset, test metrics.
+%  ========================================================================
+
+function results = run_final_experiments(dataset_name, target_unit, partition, tuned_learning_rates, final_seeds, options, checkpoint_file)
+    % Run the 9 combinations of one dataset, 30 times each (Step 7).
+    %
+    % For a given architecture, run k uses init_params(layers, seed_k) for
+    % the three algorithms, so the comparison is paired. seed_k is also the
+    % seed of the mini-batch order. Every algorithm has the same budget of
+    % epoch-equivalents and returns the parameters with the lowest
+    % validation loss; only those parameters are evaluated on the test set,
+    % once, in the original unit of the target.
+    %
+    % Checkpoint
+    % ----------
+    % The results are saved to checkpoint_file after every combination. If
+    % the file already exists with the same seeds, budget and learning
+    % rates, the finished combinations are loaded and skipped, so a long
+    % run interrupted halfway continues where it stopped.
+    %
+    % Parameters
+    % ----------
+    % dataset_name : char
+    %     Used in the printed titles.
+    % target_unit : char
+    %     Unit of the target, e.g. 'MPa' or 'degC'.
+    % partition : struct
+    %     Output of partition_concrete_dataset or partition_melbourne_dataset.
+    % tuned_learning_rates : 3 x 2 double
+    %     Output of Step 6 (row = architecture, column 1 = GD, column 2 = Adam).
+    % final_seeds : integer vector
+    %     Seeds of the runs, 1:30 in the assignment.
+    % options : struct
+    %     See default_training_options (budget_epoch_equivalents, batch
+    %     size, Adam constants, BFGS settings).
+    % checkpoint_file : char
+    %     Path of the .mat file where the results are saved.
+    %
+    % Returns
+    % -------
+    % results : struct
+    %     dataset_name, target_unit, seeds, budget_epoch_equivalents
+    %     architecture_names, layers, number_of_parameters (1 x 3)
+    %     algorithm_names : {'Mini-batch GD', 'BFGS', 'Adam'}
+    %     algorithm_codes : {'gd', 'bfgs', 'adam'}
+    %     learning_rate   : 3 x 3 double (NaN for BFGS)
+    %     test_target     : test targets in the original unit
+    %     combinations    : 3 x 3 cell, each the output of run_one_combination
+    %     completed       : 3 x 3 logical
+
+    number_of_inputs = size(partition.training.inputs_scaled, 2);
+    architectures = build_architectures(number_of_inputs);
+
+    algorithm_names = {'Mini-batch GD', 'BFGS', 'Adam'};
+    algorithm_codes = {'gd', 'bfgs', 'adam'};
+
+    number_of_architectures = numel(architectures.layers);
+    number_of_algorithms    = numel(algorithm_codes);
+
+    % ---- Learning rates of Step 6 in the algorithm order GD, BFGS, Adam ---
+    learning_rate = NaN(number_of_architectures, number_of_algorithms);
+    learning_rate(:, 1) = tuned_learning_rates(:, 1);
+    learning_rate(:, 3) = tuned_learning_rates(:, 2);
+
+    % ---- Description of the experiment -----------------------------------
+    results.dataset_name             = dataset_name;
+    results.target_unit              = target_unit;
+    results.seeds                    = final_seeds(:)';
+    results.budget_epoch_equivalents = options.budget_epoch_equivalents;
+    results.architecture_names       = architectures.names;
+    results.layers                   = architectures.layers;
+    results.algorithm_names          = algorithm_names;
+    results.algorithm_codes          = algorithm_codes;
+    results.learning_rate            = learning_rate;
+    results.test_target              = partition.test.target;
+
+    results.number_of_parameters = zeros(1, number_of_architectures);
+
+    for architecture_index = 1:number_of_architectures
+        results.number_of_parameters(architecture_index) = count_network_parameters(architectures.layers{architecture_index});
+    end
+
+    results.combinations = cell(number_of_architectures, number_of_algorithms);
+    results.completed    = false(number_of_architectures, number_of_algorithms);
+
+    print_section_title(sprintf('%s - Step 7: final experiments (%d runs, %d epoch-equivalents)', ...
+                                dataset_name, numel(final_seeds), options.budget_epoch_equivalents));
+
+    % ---- Resume from the checkpoint if it has the same settings ----------
+    if exist(checkpoint_file, 'file')
+        loaded_file = load(checkpoint_file);
+        previous_results = loaded_file.results;
+
+        same_settings = isequal(previous_results.seeds, results.seeds) && ...
+                        previous_results.budget_epoch_equivalents == results.budget_epoch_equivalents && ...
+                        isequal(previous_results.learning_rate(:, [1 3]), results.learning_rate(:, [1 3]));
+
+        if same_settings
+            results.combinations = previous_results.combinations;
+            results.completed    = previous_results.completed;
+            fprintf('Checkpoint found: %d of %d combinations already done, they are skipped.\n', ...
+                    sum(results.completed(:)), numel(results.completed));
+        else
+            fprintf('Checkpoint found with different settings: starting from scratch (it will be overwritten).\n');
+        end
+    end
+
+    % ---- The 9 combinations ----------------------------------------------
+    for architecture_index = 1:number_of_architectures
+
+        layers = architectures.layers{architecture_index};
+
+        for algorithm_index = 1:number_of_algorithms
+
+            if results.completed(architecture_index, algorithm_index)
+                fprintf('  %-12s | %-14s : already done (checkpoint)\n', ...
+                        architectures.names{architecture_index}, algorithm_names{algorithm_index});
+                continue;
+            end
+
+            if isnan(learning_rate(architecture_index, algorithm_index))
+                rate_text = 'no learning rate';
+            else
+                rate_text = sprintf('learning rate %.4g', learning_rate(architecture_index, algorithm_index));
+            end
+
+            fprintf('  %-12s | %-14s (%s), %d parameters\n', architectures.names{architecture_index}, ...
+                    algorithm_names{algorithm_index}, rate_text, results.number_of_parameters(architecture_index));
+
+            combination_start = clock;
+
+            combination = run_one_combination(layers, partition, algorithm_codes{algorithm_index}, ...
+                                              learning_rate(architecture_index, algorithm_index), ...
+                                              final_seeds, options);
+
+            results.combinations{architecture_index, algorithm_index} = combination;
+            results.completed(architecture_index, algorithm_index)    = true;
+
+            save(checkpoint_file, 'results', '-mat');
+
+            fprintf('      done in %.1f min: test RMSE %.3f +- %.3f %s, diverged runs %d/%d (saved)\n', ...
+                    etime(clock, combination_start) / 60, mean(combination.test_rmse), std(combination.test_rmse), ...
+                    target_unit, sum(combination.diverged), numel(final_seeds));
+        end
+    end
+
+    print_final_experiment_summary(results);
+end
+
+
+function combination = run_one_combination(layers, partition, algorithm_code, learning_rate, final_seeds, options)
+    % Train one architecture with one algorithm once per seed.
+    %
+    % Parameters
+    % ----------
+    % layers : integer vector, [d, h1, ..., 1]
+    % partition : struct, output of a partition_* function
+    % algorithm_code : char, 'gd', 'bfgs' or 'adam'
+    % learning_rate : double, NaN for BFGS
+    % final_seeds : integer vector
+    % options : struct, see default_training_options
+    %
+    % Returns
+    % -------
+    % combination : struct (R = number of seeds, B = budget)
+    %     algorithm_code, learning_rate, seeds
+    %     training_loss, validation_loss : B x R, per epoch-equivalent (scaled units)
+    %     elapsed_seconds                : B x R, cumulative training time
+    %     initial_training_loss, initial_validation_loss : 1 x R
+    %     best_validation_loss, best_epoch_equivalent    : 1 x R
+    %     gradient_evaluations           : 1 x R, full-dataset gradient evaluations
+    %     training_seconds               : 1 x R
+    %     diverged                       : 1 x R logical
+    %     test_mse, test_rmse, test_mae, test_r2 : 1 x R, original unit
+    %     test_predictions               : (test samples) x R, original unit
+
+    training_inputs   = partition.training.inputs_scaled;
+    training_target   = partition.training.target_scaled;
+    validation_inputs = partition.validation.inputs_scaled;
+    validation_target = partition.validation.target_scaled;
+
+    budget = options.budget_epoch_equivalents;
+    number_of_runs = numel(final_seeds);
+    number_of_test_samples = numel(partition.test.target);
+
+    if ~isnan(learning_rate)
+        options.learning_rate = learning_rate;
+    end
+
+    % ---- Allocate ----------------------------------------------------------
+    combination.algorithm_code = algorithm_code;
+    combination.learning_rate  = learning_rate;
+    combination.seeds          = final_seeds(:)';
+
+    combination.training_loss   = NaN(budget, number_of_runs);
+    combination.validation_loss = NaN(budget, number_of_runs);
+    combination.elapsed_seconds = NaN(budget, number_of_runs);
+
+    combination.initial_training_loss   = NaN(1, number_of_runs);
+    combination.initial_validation_loss = NaN(1, number_of_runs);
+    combination.best_validation_loss    = NaN(1, number_of_runs);
+    combination.best_epoch_equivalent   = zeros(1, number_of_runs);
+    combination.gradient_evaluations    = zeros(1, number_of_runs);
+    combination.training_seconds        = zeros(1, number_of_runs);
+    combination.diverged                = false(1, number_of_runs);
+
+    combination.test_mse  = NaN(1, number_of_runs);
+    combination.test_rmse = NaN(1, number_of_runs);
+    combination.test_mae  = NaN(1, number_of_runs);
+    combination.test_r2   = NaN(1, number_of_runs);
+    combination.test_predictions = NaN(number_of_test_samples, number_of_runs);
+
+    % ---- The runs ------------------------------------------------------------
+    for run_index = 1:number_of_runs
+
+        seed = final_seeds(run_index);
+
+        % Same seed -> same initial weights for GD, BFGS and Adam (paired).
+        theta0 = init_params(layers, seed);
+        options.shuffle_seed = seed;
+
+        if strcmp(algorithm_code, 'gd')
+            [best_theta, history] = train_minibatch_gd(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+        elseif strcmp(algorithm_code, 'bfgs')
+            [best_theta, history] = train_bfgs(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+        else
+            [best_theta, history] = train_adam(theta0, layers, training_inputs, training_target, validation_inputs, validation_target, options);
+        end
+
+        % ---- Training history ------------------------------------------------
+        combination.training_loss(:, run_index)   = history.training_loss;
+        combination.validation_loss(:, run_index) = history.validation_loss;
+        combination.elapsed_seconds(:, run_index) = history.elapsed_seconds;
+
+        combination.initial_training_loss(run_index)   = history.initial_training_loss;
+        combination.initial_validation_loss(run_index) = history.initial_validation_loss;
+        combination.best_validation_loss(run_index)    = history.best_validation_loss;
+        combination.best_epoch_equivalent(run_index)   = history.best_epoch_equivalent;
+        combination.gradient_evaluations(run_index)    = history.gradient_evaluations;
+        combination.training_seconds(run_index)        = history.total_training_seconds;
+        combination.diverged(run_index)                = history.diverged;
+
+        % ---- Test set: used once, with the parameters already selected -------
+        [test_metrics, test_predictions] = evaluate_on_test_set(best_theta, layers, partition);
+
+        combination.test_mse(run_index)  = test_metrics.mse;
+        combination.test_rmse(run_index) = test_metrics.rmse;
+        combination.test_mae(run_index)  = test_metrics.mae;
+        combination.test_r2(run_index)   = test_metrics.r2;
+        combination.test_predictions(:, run_index) = test_predictions;
+
+        if history.diverged
+            diverged_text = '  DIVERGED';
+        else
+            diverged_text = '';
+        end
+
+        fprintf('      run %2d (seed %2d): best validation %.4f at %4d, test RMSE %.3f, R2 %.3f, %.1f s%s\n', ...
+                run_index, seed, history.best_validation_loss, history.best_epoch_equivalent, ...
+                test_metrics.rmse, test_metrics.r2, history.total_training_seconds, diverged_text);
+    end
+end
+
+
+function [test_metrics, test_predictions] = evaluate_on_test_set(theta, layers, partition)
+    % Test metrics in the ORIGINAL unit of the target (MPa or degC).
+    %
+    % The network predicts in scaled units; the prediction is converted
+    % back with the target scaler fitted on the training set.
+    %
+    % Parameters
+    % ----------
+    % theta : P x 1 double, selected parameters
+    % layers : integer vector
+    % partition : struct, output of a partition_* function
+    %
+    % Returns
+    % -------
+    % test_metrics : struct, output of compute_regression_metrics
+    %                (mse, rmse, mae, r2)
+    % test_predictions : (test samples) x 1 double, original unit
+
+    scaled_predictions = predict_network(theta, layers, partition.test.inputs_scaled);
+
+    test_predictions = invert_standardization(scaled_predictions, partition.target_scaler);
+    test_predictions = test_predictions(:);
+
+    test_metrics = compute_regression_metrics(partition.test.target, test_predictions);
+end
+
+
+function print_final_experiment_summary(results)
+    % Quick summary of Step 7 (the full tables and figures are in Step 8).
+    %
+    % Parameters
+    % ----------
+    % results : struct, output of run_final_experiments
+
+    print_section_title(sprintf('%s - Step 7: summary over %d runs (test set, %s)', ...
+                                results.dataset_name, numel(results.seeds), results.target_unit));
+
+    fprintf('%-12s %-14s %10s %20s %18s %12s %10s %12s %12s\n', 'Architecture', 'Algorithm', 'Rate', ...
+            'Test RMSE mean+-std', 'Test R2 mean+-std', 'Median RMSE', 'Diverged', 'Mean grad.ev', 'Mean seconds');
+
+    for architecture_index = 1:numel(results.architecture_names)
+        for algorithm_index = 1:numel(results.algorithm_names)
+
+            if ~results.completed(architecture_index, algorithm_index)
+                fprintf('%-12s %-14s   (not run)\n', results.architecture_names{architecture_index}, ...
+                        results.algorithm_names{algorithm_index});
+                continue;
+            end
+
+            combination = results.combinations{architecture_index, algorithm_index};
+
+            if isnan(combination.learning_rate)
+                rate_text = '-';
+            else
+                rate_text = sprintf('%.4g', combination.learning_rate);
+            end
+
+            fprintf('%-12s %-14s %10s %11.3f +- %5.3f %10.3f +- %5.3f %12.3f %7d/%-2d %12.0f %12.1f\n', ...
+                    results.architecture_names{architecture_index}, results.algorithm_names{algorithm_index}, rate_text, ...
+                    mean(combination.test_rmse), std(combination.test_rmse), ...
+                    mean(combination.test_r2), std(combination.test_r2), ...
+                    median(combination.test_rmse), sum(combination.diverged), numel(combination.diverged), ...
+                    mean(combination.gradient_evaluations), mean(combination.training_seconds));
+        end
+    end
+end
+
+%% ========================================================================
+%  STEP 8 - REQUIRED RESULTS: UTILS
+%  Summary tables, training-progress curves, box plots, prediction plots
+%  and reference models. Uses the saved results of Step 7 (no training).
+%  ========================================================================
+
+function reference_models = compute_reference_models(dataset_name, partition, number_of_lag_columns)
+    % Fit the reference models on the training set and evaluate them on test.
+    %
+    % Concrete (number_of_lag_columns = 0):
+    %     linear regression on the same 9 input features as the networks.
+    % Melbourne (number_of_lag_columns = p):
+    %     persistence, T(t+1) = T(t) (no fitting);
+    %     linear autoregressive model on the same window of p lags;
+    %     linear regression on the same inputs as the networks (lags + sin, cos).
+    %
+    % The linear models have no hyperparameters, so they are fitted on the
+    % training set only (unscaled inputs, target in the original unit).
+    %
+    % Parameters
+    % ----------
+    % dataset_name : char
+    %     Used in the printed title.
+    % partition : struct
+    %     Output of partition_concrete_dataset or partition_melbourne_dataset.
+    % number_of_lag_columns : integer
+    %     0 for Concrete, p for Melbourne (lag columns come first, the last
+    %     lag column is T(t)).
+    %
+    % Returns
+    % -------
+    % reference_models : 1 x M struct array
+    %     name             : char
+    %     test_metrics     : output of compute_regression_metrics (original unit)
+    %     test_predictions : (test samples) x 1 double, original unit
+
+    training_inputs = partition.training.inputs;
+    training_target = partition.training.target;
+    test_inputs     = partition.test.inputs;
+    test_target     = partition.test.target;
+
+    model_names = {};
+    model_predictions = {};
+
+    if number_of_lag_columns == 0
+
+        coefficients = fit_linear_least_squares(training_inputs, training_target);
+
+        model_names{end + 1}       = 'Linear regression';
+        model_predictions{end + 1} = predict_linear_model(test_inputs, coefficients);
+
+    else
+
+        lag_columns = 1:number_of_lag_columns;
+
+        % ---- Persistence: tomorrow = today --------------------------------
+        model_names{end + 1}       = 'Persistence';
+        model_predictions{end + 1} = test_inputs(:, number_of_lag_columns);
+
+        % ---- Linear autoregressive model on the same window ---------------
+        autoregressive_coefficients = fit_linear_least_squares(training_inputs(:, lag_columns), training_target);
+
+        model_names{end + 1}       = sprintf('Linear AR (%d lags)', number_of_lag_columns);
+        model_predictions{end + 1} = predict_linear_model(test_inputs(:, lag_columns), autoregressive_coefficients);
+
+        % ---- Linear regression on the same inputs as the networks ---------
+        full_coefficients = fit_linear_least_squares(training_inputs, training_target);
+
+        model_names{end + 1}       = 'Linear (lags + calendar)';
+        model_predictions{end + 1} = predict_linear_model(test_inputs, full_coefficients);
+    end
+
+    % ---- Metrics in the original unit ------------------------------------
+    print_section_title(sprintf('%s - Step 8: reference models (test set)', dataset_name));
+    fprintf('%-28s %10s %10s %10s\n', 'Model', 'RMSE', 'MAE', 'R2');
+
+    for model_index = 1:numel(model_names)
+
+        predictions = model_predictions{model_index}(:);
+        metrics = compute_regression_metrics(test_target, predictions);
+
+        reference_models(model_index).name             = model_names{model_index};
+        reference_models(model_index).test_metrics     = metrics;
+        reference_models(model_index).test_predictions = predictions;
+
+        fprintf('%-28s %10.3f %10.3f %10.3f\n', model_names{model_index}, metrics.rmse, metrics.mae, metrics.r2);
+    end
+end
+
+
+function step8_summary = produce_step8_results(results, reference_models, test_dates, figures_folder, output_folder, close_figures_after_saving)
+    % Produce every Step 8 table and figure for one dataset.
+    %
+    % Parameters
+    % ----------
+    % results : struct
+    %     Output of run_final_experiments (Step 7).
+    % reference_models : struct array
+    %     Output of compute_reference_models.
+    % test_dates : double column or []
+    %     Serial dates of the test targets (Melbourne), [] for Concrete.
+    % figures_folder : char
+    %     Folder where the PNG files are saved.
+    % output_folder : char
+    %     Folder where the summary table (.txt) is saved.
+    % close_figures_after_saving : logical
+    %     Close each figure after saving it (keeps MATLAB light).
+    %
+    % Returns
+    % -------
+    % step8_summary : struct
+    %     representative_run : output of select_representative_run
+    %     summary_file       : path of the saved summary table
+
+    dataset_token = lower(results.dataset_name);
+
+    ensure_folder_exists(figures_folder);
+    ensure_folder_exists(output_folder);
+
+    % ---- 1. Summary table (screen and text file) -------------------------
+    print_step8_summary_table(results, reference_models, 1);
+
+    summary_file = fullfile(output_folder, sprintf('step8_%s_summary_table.txt', dataset_token));
+    file_id = fopen(summary_file, 'w');
+    print_step8_summary_table(results, reference_models, file_id);
+    fclose(file_id);
+
+    fprintf('  saved: %s\n', summary_file);
+
+    % ---- 2. Training progress: per epoch-equivalent and per second -------
+    print_section_title(sprintf('%s - Step 8: figures', results.dataset_name));
+
+    for architecture_index = 1:numel(results.architecture_names)
+
+        architecture_token = lower(strrep(results.architecture_names{architecture_index}, ' ', '_'));
+
+        figure_handle = plot_training_progress(results, architecture_index, 'epochs');
+        save_figure(figure_handle, figures_folder, sprintf('step8_%s_%s_training_progress', dataset_token, architecture_token));
+        close_if_requested(figure_handle, close_figures_after_saving);
+
+        figure_handle = plot_training_progress(results, architecture_index, 'seconds');
+        save_figure(figure_handle, figures_folder, sprintf('step8_%s_%s_training_time', dataset_token, architecture_token));
+        close_if_requested(figure_handle, close_figures_after_saving);
+    end
+
+    % ---- 3. Box plots of the test RMSE -----------------------------------
+    figure_handle = plot_test_error_box_plots(results, reference_models);
+    save_figure(figure_handle, figures_folder, sprintf('step8_%s_test_rmse_box_plots', dataset_token));
+    close_if_requested(figure_handle, close_figures_after_saving);
+
+    % ---- 4. Prediction plots and residual histograms ---------------------
+    representative_run = select_representative_run(results);
+
+    if isempty(test_dates)
+        figure_handle = plot_concrete_predictions(results, representative_run, reference_models);
+    else
+        figure_handle = plot_melbourne_predictions(results, representative_run, reference_models, test_dates, 60);
+    end
+
+    save_figure(figure_handle, figures_folder, sprintf('step8_%s_predictions', dataset_token));
+    close_if_requested(figure_handle, close_figures_after_saving);
+
+    step8_summary.representative_run = representative_run;
+    step8_summary.summary_file       = summary_file;
+end
+
+
+function close_if_requested(figure_handle, close_figure)
+    % Close a figure when close_figure is true.
+    %
+    % Parameters
+    % ----------
+    % figure_handle : handle
+    % close_figure : logical
+
+    if close_figure
+        close(figure_handle);
+    end
+end
+
+
+function print_step8_summary_table(results, reference_models, file_id)
+    % 3 x 3 summary of the test metrics, plus the reference models.
+    %
+    % Parameters
+    % ----------
+    % results : struct, output of run_final_experiments
+    % reference_models : struct array, output of compute_reference_models
+    % file_id : integer, 1 for the screen or the id returned by fopen
+
+    unit = results.target_unit;
+
+    fprintf(file_id, '\n%s - Step 8: test-set summary over %d runs (RMSE in %s)\n', results.dataset_name, numel(results.seeds), unit);
+    fprintf(file_id, '%s\n', repmat('=', 1, 70));
+
+    fprintf(file_id, '%-12s %-14s %10s %18s %18s %8s %8s %8s %11s %9s\n', 'Architecture', 'Algorithm', 'Parameters', ...
+            'RMSE mean+-std', 'R2 mean+-std', 'Median', 'Best', 'Worst', 'Best epoch', 'Seconds');
+
+    for architecture_index = 1:numel(results.architecture_names)
+        for algorithm_index = 1:numel(results.algorithm_names)
+
+            combination = results.combinations{architecture_index, algorithm_index};
+            test_rmse = combination.test_rmse;
+
+            fprintf(file_id, '%-12s %-14s %10d %9.3f +- %5.3f %9.3f +- %5.3f %8.3f %8.3f %8.3f %11.0f %9.1f\n', ...
+                    results.architecture_names{architecture_index}, results.algorithm_names{algorithm_index}, ...
+                    results.number_of_parameters(architecture_index), ...
+                    mean(test_rmse), std(test_rmse), mean(combination.test_r2), std(combination.test_r2), ...
+                    median(test_rmse), min(test_rmse), max(test_rmse), ...
+                    median(combination.best_epoch_equivalent), mean(combination.training_seconds));
+        end
+    end
+
+    fprintf(file_id, '\nReference models (single fit, no repetitions):\n');
+    fprintf(file_id, '%-28s %10s %10s %10s\n', 'Model', 'RMSE', 'MAE', 'R2');
+
+    for model_index = 1:numel(reference_models)
+        metrics = reference_models(model_index).test_metrics;
+        fprintf(file_id, '%-28s %10.3f %10.3f %10.3f\n', reference_models(model_index).name, metrics.rmse, metrics.mae, metrics.r2);
+    end
+
+    fprintf(file_id, '\nBest epoch = median epoch-equivalent of the selected (lowest validation loss) parameters.\n');
+    fprintf(file_id, 'Seconds = mean training time per run.\n');
+end
+
+
+function [lower_quartile, median_curve, upper_quartile] = compute_curve_quantiles(curve_matrix)
+    % First quartile, median and third quartile of the runs at each point.
+    %
+    % NaN values (e.g. after a divergence) are ignored at each point.
+    %
+    % Parameters
+    % ----------
+    % curve_matrix : B x R double, one column per run
+    %
+    % Returns
+    % -------
+    % lower_quartile, median_curve, upper_quartile : B x 1 double
+
+    number_of_points = size(curve_matrix, 1);
+
+    lower_quartile = NaN(number_of_points, 1);
+    median_curve   = NaN(number_of_points, 1);
+    upper_quartile = NaN(number_of_points, 1);
+
+    for point_index = 1:number_of_points
+
+        values_at_point = curve_matrix(point_index, :);
+        values_at_point = sort(values_at_point(~isnan(values_at_point)));
+
+        if ~isempty(values_at_point)
+            lower_quartile(point_index) = compute_percentile(values_at_point, 0.25);
+            median_curve(point_index)   = compute_percentile(values_at_point, 0.50);
+            upper_quartile(point_index) = compute_percentile(values_at_point, 0.75);
+        end
+    end
+end
+
+
+function figure_handle = plot_training_progress(results, architecture_index, horizontal_axis)
+    % Training and validation loss of the three algorithms for one architecture.
+    %
+    % Solid line = median of the runs, dotted lines = first and third
+    % quartiles (interquartile range). Vertical axis logarithmic.
+    %
+    % Parameters
+    % ----------
+    % results : struct, output of run_final_experiments
+    % architecture_index : integer, 1 (A), 2 (B) or 3 (C)
+    % horizontal_axis : char
+    %     'epochs'  : epoch-equivalents (equal computational cost)
+    %     'seconds' : median cumulative training time over the runs
+    %
+    % Returns
+    % -------
+    % figure_handle : handle of the new figure
+
+    algorithm_colors = {[0 0.45 0.74], [0.47 0.67 0.19], [0.85 0.33 0.10]};   % GD blue, BFGS green, Adam orange
+
+    loss_fields = {'training_loss', 'validation_loss'};
+    loss_titles = {'Training loss', 'Validation loss'};
+
+    architecture_name = results.architecture_names{architecture_index};
+    number_of_algorithms = numel(results.algorithm_names);
+
+    figure_handle = figure('Position', [100 100 1250 460]);
+
+    for panel_index = 1:2
+
+        subplot(1, 2, panel_index);
+        hold on;
+
+        legend_handles = zeros(1, number_of_algorithms);
+
+        for algorithm_index = 1:number_of_algorithms
+
+            combination = results.combinations{architecture_index, algorithm_index};
+            color = algorithm_colors{algorithm_index};
+
+            [lower_quartile, median_curve, upper_quartile] = compute_curve_quantiles(combination.(loss_fields{panel_index}));
+
+            if strcmp(horizontal_axis, 'seconds')
+                [unused_lower, horizontal_values, unused_upper] = compute_curve_quantiles(combination.elapsed_seconds);
+            else
+                horizontal_values = (1:numel(median_curve))';
+            end
+
+            legend_handles(algorithm_index) = plot(horizontal_values, median_curve, '-', 'Color', color, 'LineWidth', 1.5);
+            plot(horizontal_values, lower_quartile, ':', 'Color', color, 'LineWidth', 1);
+            plot(horizontal_values, upper_quartile, ':', 'Color', color, 'LineWidth', 1);
+        end
+
+        set(gca, 'YScale', 'log');
+        grid on;
+        box on;
+
+        title(sprintf('%s, %s: %s (median and IQR of %d runs)', results.dataset_name, architecture_name, ...
+                      loss_titles{panel_index}, numel(results.seeds)));
+
+        if strcmp(horizontal_axis, 'seconds')
+            xlabel('Training time (s, median over the runs)');
+        else
+            xlabel('Epoch-equivalents');
+        end
+
+        ylabel('MSE (scaled units)');
+        legend(legend_handles, results.algorithm_names{:}, 'Location', 'NorthEast');
+        hold off;
+    end
+end
+
+
+function figure_handle = plot_test_error_box_plots(results, reference_models)
+    % Box plots of the test RMSE of the 9 combinations (draw_box_plot, no toolbox).
+    %
+    % The reference models are drawn as horizontal lines.
+    %
+    % Parameters
+    % ----------
+    % results : struct, output of run_final_experiments
+    % reference_models : struct array, output of compute_reference_models
+    %
+    % Returns
+    % -------
+    % figure_handle : handle of the new figure
+
+    short_algorithm_names = {'GD', 'BFGS', 'Adam'};
+
+    number_of_architectures = numel(results.architecture_names);
+    number_of_algorithms    = numel(results.algorithm_names);
+    number_of_groups        = number_of_architectures * number_of_algorithms;
+
+    group_values = cell(1, number_of_groups);
+    group_labels = cell(1, number_of_groups);
+    group_index  = 0;
+
+    for architecture_index = 1:number_of_architectures
+        for algorithm_index = 1:number_of_algorithms
+
+            group_index = group_index + 1;
+            combination = results.combinations{architecture_index, algorithm_index};
+
+            group_values{group_index} = combination.test_rmse;
+            group_labels{group_index} = sprintf('%s %s', results.architecture_names{architecture_index}(1), ...
+                                                short_algorithm_names{algorithm_index});
+        end
+    end
+
+    figure_handle = figure('Position', [100 100 1050 460]);
+
+    draw_box_plot(group_values, group_labels);
+
+    % ---- Reference models as horizontal lines ----------------------------
+    hold on;
+
+    line_styles = {'--', '-.', ':'};
+    number_of_models = numel(reference_models);
+    legend_handles = zeros(1, number_of_models);
+    legend_labels  = cell(1, number_of_models);
+
+    for model_index = 1:number_of_models
+        model_rmse = reference_models(model_index).test_metrics.rmse;
+        style = line_styles{mod(model_index - 1, numel(line_styles)) + 1};
+
+        legend_handles(model_index) = plot([0.5, number_of_groups + 0.5], [model_rmse, model_rmse], style, ...
+                                           'Color', [0.3 0.3 0.3], 'LineWidth', 1.2);
+        legend_labels{model_index} = sprintf('%s (%.3f %s)', reference_models(model_index).name, model_rmse, results.target_unit);
+    end
+
+    hold off;
+    grid on;
+    box on;
+
+    title(sprintf('%s: test RMSE of the 9 combinations (%d runs each)', results.dataset_name, numel(results.seeds)));
+    xlabel('Architecture and algorithm');
+    ylabel(sprintf('Test RMSE (%s)', results.target_unit));
+    legend(legend_handles, legend_labels{:}, 'Location', 'Best');
+end
+
+
+function representative_run = select_representative_run(results)
+    % Run used for the prediction plots.
+    %
+    % The combination with the lowest mean test RMSE is chosen, and inside
+    % it the run whose test RMSE is closest to the median (a typical run,
+    % not the luckiest one).
+    %
+    % Parameters
+    % ----------
+    % results : struct, output of run_final_experiments
+    %
+    % Returns
+    % -------
+    % representative_run : struct
+    %     architecture_index, algorithm_index, run_index, seed, test_rmse, label
+
+    number_of_architectures = numel(results.architecture_names);
+    number_of_algorithms    = numel(results.algorithm_names);
+
+    mean_rmse = Inf(number_of_architectures, number_of_algorithms);
+
+    for architecture_index = 1:number_of_architectures
+        for algorithm_index = 1:number_of_algorithms
+            mean_rmse(architecture_index, algorithm_index) = mean(results.combinations{architecture_index, algorithm_index}.test_rmse);
+        end
+    end
+
+    [unused_lowest, best_position] = min(mean_rmse(:));
+    [best_architecture, best_algorithm] = ind2sub(size(mean_rmse), best_position);
+
+    test_rmse = results.combinations{best_architecture, best_algorithm}.test_rmse;
+    [unused_distance, run_index] = min(abs(test_rmse - median(test_rmse)));
+
+    representative_run.architecture_index = best_architecture;
+    representative_run.algorithm_index    = best_algorithm;
+    representative_run.run_index          = run_index;
+    representative_run.seed               = results.seeds(run_index);
+    representative_run.test_rmse          = test_rmse(run_index);
+    representative_run.label              = sprintf('%s, %s, seed %d', results.architecture_names{best_architecture}, ...
+                                                    results.algorithm_names{best_algorithm}, results.seeds(run_index));
+
+    fprintf('Representative run for the prediction plots: %s (test RMSE %.3f %s)\n', ...
+            representative_run.label, representative_run.test_rmse, results.target_unit);
+end
+
+
+function figure_handle = plot_concrete_predictions(results, representative_run, reference_models)
+    % Concrete: predicted against measured strength, and residual histograms.
+    %
+    % Parameters
+    % ----------
+    % results : struct, output of run_final_experiments
+    % representative_run : struct, output of select_representative_run
+    % reference_models : struct array (first model = linear regression)
+    %
+    % Returns
+    % -------
+    % figure_handle : handle of the new figure
+
+    combination = results.combinations{representative_run.architecture_index, representative_run.algorithm_index};
+
+    observed_values     = results.test_target(:);
+    network_predictions = combination.test_predictions(:, representative_run.run_index);
+    linear_predictions  = reference_models(1).test_predictions;
+
+    network_color = [0 0.45 0.74];
+    linear_color  = [0.6 0.6 0.6];
+
+    figure_handle = figure('Position', [100 100 1250 500]);
+
+    % ---- Predicted against measured --------------------------------------
+    subplot(1, 2, 1);
+    hold on;
+
+    linear_handle  = plot(observed_values, linear_predictions, '.', 'Color', linear_color, 'MarkerSize', 10);
+    network_handle = plot(observed_values, network_predictions, '.', 'Color', network_color, 'MarkerSize', 12);
+
+    all_values  = [observed_values; network_predictions; linear_predictions];
+    axis_limits = [min(all_values), max(all_values)];
+    plot(axis_limits, axis_limits, 'k--');
+
+    set(gca, 'XLim', axis_limits, 'YLim', axis_limits);
+    grid on;
+    box on;
+
+    title(sprintf('Predicted vs measured (%s)', representative_run.label));
+    xlabel('Measured strength (MPa)');
+    ylabel('Predicted strength (MPa)');
+    legend([network_handle, linear_handle], 'Neural network', reference_models(1).name, 'Location', 'NorthWest');
+    hold off;
+
+    % ---- Residual histograms ---------------------------------------------
+    subplot(1, 2, 2);
+
+    draw_residual_histograms({observed_values - network_predictions, observed_values - linear_predictions}, ...
+                             {'Neural network', reference_models(1).name}, ...
+                             {network_color, linear_color}, results.target_unit);
+
+    title('Residuals on the test set');
+end
+
+
+function figure_handle = plot_melbourne_predictions(results, representative_run, reference_models, test_dates, zoom_days)
+    % Melbourne: observed and predicted temperature over the test period,
+    % a zoomed window, and residual histograms.
+    %
+    % Parameters
+    % ----------
+    % results : struct, output of run_final_experiments
+    % representative_run : struct, output of select_representative_run
+    % reference_models : struct array (1 = persistence, 2 = linear AR)
+    % test_dates : double column, serial dates of the test targets
+    % zoom_days : integer, length of the zoomed window (first days of test)
+    %
+    % Returns
+    % -------
+    % figure_handle : handle of the new figure
+
+    combination = results.combinations{representative_run.architecture_index, representative_run.algorithm_index};
+
+    observed_values         = results.test_target(:);
+    network_predictions     = combination.test_predictions(:, representative_run.run_index);
+    persistence_predictions = reference_models(1).test_predictions;
+    autoregressive_predictions = reference_models(2).test_predictions;
+
+    observed_color    = [0.45 0.45 0.45];
+    network_color     = [0 0.45 0.74];
+    persistence_color = [0.85 0.33 0.10];
+    autoregressive_color = [0.47 0.67 0.19];
+
+    figure_handle = figure('Position', [100 50 1250 950]);
+
+    % ---- Whole test period -----------------------------------------------
+    subplot(3, 1, 1);
+    hold on;
+
+    observed_handle = plot(test_dates, observed_values, '-', 'Color', observed_color, 'LineWidth', 0.5);
+    network_handle  = plot(test_dates, network_predictions, '-', 'Color', network_color, 'LineWidth', 1);
+
+    datetick('x', 28);   % numeric format 28 = 'mmmyyyy' (MATLAB 2007 accepts only predefined formats)
+    grid on;
+    box on;
+
+    title(sprintf('Test period: observed and predicted T(t+1) (%s)', representative_run.label));
+    ylabel('Minimum temperature (degC)');
+    legend([observed_handle, network_handle], 'Observed', 'Neural network', 'Location', 'NorthEast');
+    hold off;
+
+    % ---- Zoomed window -----------------------------------------------------
+    subplot(3, 1, 2);
+    hold on;
+
+    zoom_rows = 1:min(zoom_days, numel(observed_values));
+
+    observed_handle    = plot(test_dates(zoom_rows), observed_values(zoom_rows), '-o', 'Color', observed_color, 'MarkerSize', 3);
+    network_handle     = plot(test_dates(zoom_rows), network_predictions(zoom_rows), '-', 'Color', network_color, 'LineWidth', 1.5);
+    persistence_handle = plot(test_dates(zoom_rows), persistence_predictions(zoom_rows), '--', 'Color', persistence_color, 'LineWidth', 1);
+
+    datetick('x', 1);    % numeric format 1 = 'dd-mmm-yyyy'
+    grid on;
+    box on;
+
+    title(sprintf('Zoom: first %d days of the test period', numel(zoom_rows)));
+    ylabel('Minimum temperature (degC)');
+    legend([observed_handle, network_handle, persistence_handle], 'Observed', 'Neural network', reference_models(1).name, 'Location', 'NorthEast');
+    hold off;
+
+    % ---- Residual histograms ---------------------------------------------
+    subplot(3, 1, 3);
+
+    draw_residual_histograms({observed_values - network_predictions, observed_values - persistence_predictions, observed_values - autoregressive_predictions}, ...
+                             {'Neural network', reference_models(1).name, reference_models(2).name}, ...
+                             {network_color, persistence_color, autoregressive_color}, results.target_unit);
+
+    title('Residuals on the test set');
+end
+
+
+function draw_residual_histograms(residual_sets, set_labels, set_colors, unit)
+    % Histograms of several residual sets with common bins, drawn as lines.
+    %
+    % Lines are used instead of bars so that the sets can be compared on
+    % the same axes. The legend gives the mean and standard deviation.
+    %
+    % Parameters
+    % ----------
+    % residual_sets : 1 x S cell of double vectors (observed - predicted)
+    % set_labels : 1 x S cell of char
+    % set_colors : 1 x S cell of RGB vectors
+    % unit : char, unit of the residuals
+
+    number_of_bins = 30;
+    number_of_sets = numel(residual_sets);
+
+    all_residuals = [];
+
+    for set_index = 1:number_of_sets
+        all_residuals = [all_residuals; residual_sets{set_index}(:)];
+    end
+
+    bin_centers = linspace(min(all_residuals), max(all_residuals), number_of_bins);
+
+    hold on;
+
+    legend_handles = zeros(1, number_of_sets);
+    legend_labels  = cell(1, number_of_sets);
+
+    for set_index = 1:number_of_sets
+        residuals_of_set = residual_sets{set_index}(:);
+        bin_counts = hist(residuals_of_set, bin_centers);
+
+        legend_handles(set_index) = plot(bin_centers, bin_counts, '-o', 'Color', set_colors{set_index}, ...
+                                         'LineWidth', 1.2, 'MarkerSize', 3);
+        legend_labels{set_index} = sprintf('%s (mean %.2f, std %.2f)', set_labels{set_index}, ...
+                                           mean(residuals_of_set), std(residuals_of_set));
+    end
+
+    plot([0 0], get(gca, 'YLim'), 'k:');
+
+    hold off;
+    grid on;
+    box on;
+
+    xlabel(sprintf('Residual = observed - predicted (%s)', unit));
+    ylabel('Number of test samples');
+    legend(legend_handles, legend_labels{:}, 'Location', 'NorthEast');
+end
+
 

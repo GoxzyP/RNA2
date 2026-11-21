@@ -1,0 +1,22 @@
+
+MELBOURNE - Step 8: test-set summary over 30 runs (RMSE in degC)
+======================================================================
+Architecture Algorithm      Parameters     RMSE mean+-std       R2 mean+-std   Median     Best    Worst  Best epoch   Seconds
+A Reference  Mini-batch GD         111     2.193 +- 0.020     0.684 +- 0.006    2.188    2.166    2.245          57       6.0
+A Reference  BFGS                  111     2.181 +- 0.020     0.687 +- 0.006    2.183    2.143    2.215          86       1.1
+A Reference  Adam                  111     2.185 +- 0.024     0.686 +- 0.007    2.182    2.146    2.249          58       6.9
+B Wide       Mini-batch GD        1101     2.184 +- 0.015     0.686 +- 0.004    2.181    2.156    2.217         109      17.0
+B Wide       BFGS                 1101     2.177 +- 0.011     0.688 +- 0.003    2.177    2.154    2.201          91      28.3
+B Wide       Adam                 1101     2.182 +- 0.013     0.687 +- 0.004    2.181    2.157    2.207          40      19.0
+C Deep       Mini-batch GD        1101     2.203 +- 0.029     0.681 +- 0.008    2.202    2.162    2.296         108      28.5
+C Deep       BFGS                 1101     2.188 +- 0.022     0.685 +- 0.006    2.187    2.148    2.233          55      24.5
+C Deep       Adam                 1101     2.204 +- 0.027     0.680 +- 0.008    2.205    2.148    2.255         125      30.6
+
+Reference models (single fit, no repetitions):
+Model                              RMSE        MAE         R2
+Persistence                       2.572      2.036      0.565
+Linear AR (7 lags)                2.261      1.760      0.664
+Linear (lags + calendar)          2.181      1.712      0.687
+
+Best epoch = median epoch-equivalent of the selected (lowest validation loss) parameters.
+Seconds = mean training time per run.

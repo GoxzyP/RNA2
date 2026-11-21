@@ -44,15 +44,15 @@ melbourne_dataset = L.load_melbourne_dataset(melbourne_file_path);
 melbourne_inspection_report = L.inspect_melbourne_dataset(melbourne_dataset);
 
 
-%% ========================================================================
-%  STEP 2 - EXPLORATORY DATA ANALYSIS
-%  ========================================================================
-
-% Figures are shown on screen and saved as PNG files in this folder.
-figures_folder = fullfile(data_folder, 'figures');
-
-concrete_eda_report  = L.explore_concrete_dataset(concrete_dataset, figures_folder);
-melbourne_eda_report = L.explore_melbourne_dataset(melbourne_dataset, figures_folder);
+% %% ========================================================================
+% %  STEP 2 - EXPLORATORY DATA ANALYSIS
+% %  ========================================================================
+% 
+% % Figures are shown on screen and saved as PNG files in this folder.
+% figures_folder = fullfile(data_folder, 'figures');
+% 
+% concrete_eda_report  = L.explore_concrete_dataset(concrete_dataset, figures_folder);
+% melbourne_eda_report = L.explore_melbourne_dataset(melbourne_dataset, figures_folder);
 
 
 %% ========================================================================
@@ -124,49 +124,136 @@ smoke_test_options.learning_rate_adam = 0.005;   % provisional (Step 6 tunes it)
 concrete_smoke_test  = L.run_training_smoke_test('CONCRETE', concrete_partition, smoke_test_options);
 melbourne_smoke_test = L.run_training_smoke_test('MELBOURNE', melbourne_partition, smoke_test_options);
 
+% %% ========================================================================
+% %  STEP 6 - HYPERPARAMETER TUNING
+% %  ========================================================================
+% %
+% % The learning rates of mini-batch GD and Adam are tuned on the VALIDATION
+% % set, separately for each dataset and architecture: 7 values on a
+% % logarithmic grid (half-decade steps), 5 repetitions per value. The batch
+% % size is fixed at 32 for both algorithms. BFGS has no learning rate; its
+% % line-search settings and stopping criteria are printed below.
+% %
+% % Tuning seeds 42..46: 42 is the training seed of the assignment, and they
+% % do not overlap with the seeds 1..30 of the final runs (Step 7), so the
+% % final results are not measured on the initialisations used to choose
+% % the learning rates.
+% 
+% tuning_options = L.default_training_options();
+% 
+% % Reduced budget to keep the search affordable (7 x 5 x 2 x 3 runs per
+% % dataset). Set it to 1000 (same as Step 7) if there is time.
+% tuning_options.budget_epoch_equivalents = 200;
+% 
+% learning_rate_grids.gd   = 10 .^ (-3:0.5:0);     % 0.001 ... 1
+% learning_rate_grids.adam = 10 .^ (-4:0.5:-1);    % 0.0001 ... 0.1
+% 
+% tuning_seeds = 42:46;
+% 
+% L.print_bfgs_settings(L.default_training_options());
+% 
+% % ---- Concrete ---------------------------------------------------------------
+% concrete_tuning = L.tune_learning_rates('CONCRETE', concrete_partition, learning_rate_grids, tuning_seeds, tuning_options);
+% save(fullfile(data_folder, 'step6_tuning_concrete.mat'), 'concrete_tuning', '-mat');
+% 
+% figure_handle = L.plot_learning_rate_tuning(concrete_tuning);
+% L.save_figure(figure_handle, figures_folder, 'step6_concrete_learning_rate_tuning');
+% 
+% % ---- Melbourne --------------------------------------------------------------
+% melbourne_tuning = L.tune_learning_rates('MELBOURNE', melbourne_partition, learning_rate_grids, tuning_seeds, tuning_options);
+% save(fullfile(data_folder, 'step6_tuning_melbourne.mat'), 'melbourne_tuning', '-mat');
+% 
+% figure_handle = L.plot_learning_rate_tuning(melbourne_tuning);
+% L.save_figure(figure_handle, figures_folder, 'step6_melbourne_learning_rate_tuning');
+% 
+% % ---- Learning rates used in Step 7 ------------------------------------------
+% % Row = architecture (A, B, C), column 1 = mini-batch GD, column 2 = Adam.
+% concrete_learning_rates  = concrete_tuning.chosen_learning_rate;
+% melbourne_learning_rates = melbourne_tuning.chosen_learning_rate;
+
+% %% ========================================================================
+% %  STEP 7 - FINAL EXPERIMENTS
+% %  ========================================================================
+% %
+% % The 18 combinations (2 datasets x 3 architectures x 3 algorithms) are run
+% % 30 times each with seeds 1..30, using the learning rates chosen in
+% % Step 6. For a given dataset and architecture, run k uses the same initial
+% % weights for the three algorithms (paired comparison). All algorithms
+% % have the same budget of 1000 epoch-equivalents. The test set is used
+% % only here, once per run, after training has selected the parameters.
+% %
+% % The results are saved after every combination; if MATLAB stops, running
+% % this block again continues from the last finished combination.
+% 
+% final_options = L.default_training_options();
+% final_options.budget_epoch_equivalents = 1000;
+% 
+% final_seeds = 1:30;
+% 
+% results_folder = fullfile(data_folder, 'results');
+% L.ensure_folder_exists(results_folder);
+% 
+% % ---- Learning rates of Step 6 (loaded if Step 6 was not run now) -----------
+% if ~exist('concrete_tuning', 'var')
+%     loaded_file = load(fullfile(data_folder, 'step6_tuning_concrete.mat'));
+%     concrete_tuning = loaded_file.concrete_tuning;
+% end
+% 
+% if ~exist('melbourne_tuning', 'var')
+%     loaded_file = load(fullfile(data_folder, 'step6_tuning_melbourne.mat'));
+%     melbourne_tuning = loaded_file.melbourne_tuning;
+% end
+% 
+% % ---- Concrete ---------------------------------------------------------------
+% concrete_results = L.run_final_experiments('CONCRETE', 'MPa', concrete_partition, ...
+%                                            concrete_tuning.chosen_learning_rate, final_seeds, final_options, ...
+%                                            fullfile(results_folder, 'step7_results_concrete.mat'));
+% 
+% % ---- Melbourne --------------------------------------------------------------
+% melbourne_results = L.run_final_experiments('MELBOURNE', 'degC', melbourne_partition, ...
+%                                             melbourne_tuning.chosen_learning_rate, final_seeds, final_options, ...
+%                                             fullfile(results_folder, 'step7_results_melbourne.mat'));
+
+
 %% ========================================================================
-%  STEP 6 - HYPERPARAMETER TUNING
+%  STEP 8 - REQUIRED RESULTS
 %  ========================================================================
 %
-% The learning rates of mini-batch GD and Adam are tuned on the VALIDATION
-% set, separately for each dataset and architecture: 7 values on a
-% logarithmic grid (half-decade steps), 5 repetitions per value. The batch
-% size is fixed at 32 for both algorithms. BFGS has no learning rate; its
-% line-search settings and stopping criteria are printed below.
-%
-% Tuning seeds 42..46: 42 is the training seed of the assignment, and they
-% do not overlap with the seeds 1..30 of the final runs (Step 7), so the
-% final results are not measured on the initialisations used to choose
-% the learning rates.
+% Uses the saved results of Step 7 (no training is repeated):
+%   - summary table per dataset (screen + results/step8_*_summary_table.txt)
+%   - training progress per architecture (median and IQR, log scale),
+%     per epoch-equivalent and per second
+%   - box plots of the test RMSE of the 9 combinations
+%   - prediction plots and residual histograms (representative run)
+%   - reference models: linear regression (Concrete); persistence, linear
+%     AR on the same window and linear regression (Melbourne)
 
-tuning_options = L.default_training_options();
+figures_folder = fullfile(data_folder, 'figures');
+results_folder = fullfile(data_folder, 'results');
 
-% Reduced budget to keep the search affordable (7 x 5 x 2 x 3 runs per
-% dataset). Set it to 1000 (same as Step 7) if there is time.
-tuning_options.budget_epoch_equivalents = 200;
+close_figures_after_saving = true;   % the PNG files stay in the figures folder
 
-learning_rate_grids.gd   = 10 .^ (-3:0.5:0);     % 0.001 ... 1
-learning_rate_grids.adam = 10 .^ (-4:0.5:-1);    % 0.0001 ... 0.1
+% ---- Results of Step 7 (loaded if Step 7 was not run now) ------------------
+if ~exist('concrete_results', 'var')
+    loaded_file = load(fullfile(results_folder, 'step7_results_concrete.mat'));
+    concrete_results = loaded_file.results;
+end
 
-tuning_seeds = 42:46;
+if ~exist('melbourne_results', 'var')
+    loaded_file = load(fullfile(results_folder, 'step7_results_melbourne.mat'));
+    melbourne_results = loaded_file.results;
+end
 
-L.print_bfgs_settings(L.default_training_options());
+% ---- Reference models --------------------------------------------------------
+concrete_reference_models  = L.compute_reference_models('CONCRETE', concrete_partition, 0);
+melbourne_reference_models = L.compute_reference_models('MELBOURNE', melbourne_partition, melbourne_features.number_of_lag_columns);
 
-% ---- Concrete ---------------------------------------------------------------
-concrete_tuning = L.tune_learning_rates('CONCRETE', concrete_partition, learning_rate_grids, tuning_seeds, tuning_options);
-save(fullfile(data_folder, 'step6_tuning_concrete.mat'), 'concrete_tuning', '-mat');
+% Dates of the Melbourne test targets (for the time-series plots).
+melbourne_test_dates = melbourne_features.target_dates(melbourne_partition.test.row_indices);
 
-figure_handle = L.plot_learning_rate_tuning(concrete_tuning);
-L.save_figure(figure_handle, figures_folder, 'step6_concrete_learning_rate_tuning');
+% ---- Tables and figures ------------------------------------------------------
+concrete_step8  = L.produce_step8_results(concrete_results, concrete_reference_models, [], ...
+                                          figures_folder, results_folder, close_figures_after_saving);
 
-% ---- Melbourne --------------------------------------------------------------
-melbourne_tuning = L.tune_learning_rates('MELBOURNE', melbourne_partition, learning_rate_grids, tuning_seeds, tuning_options);
-save(fullfile(data_folder, 'step6_tuning_melbourne.mat'), 'melbourne_tuning', '-mat');
-
-figure_handle = L.plot_learning_rate_tuning(melbourne_tuning);
-L.save_figure(figure_handle, figures_folder, 'step6_melbourne_learning_rate_tuning');
-
-% ---- Learning rates used in Step 7 ------------------------------------------
-% Row = architecture (A, B, C), column 1 = mini-batch GD, column 2 = Adam.
-concrete_learning_rates  = concrete_tuning.chosen_learning_rate;
-melbourne_learning_rates = melbourne_tuning.chosen_learning_rate;
+melbourne_step8 = L.produce_step8_results(melbourne_results, melbourne_reference_models, melbourne_test_dates, ...
+                                          figures_folder, results_folder, close_figures_after_saving);

@@ -1,0 +1,20 @@
+
+CONCRETE - Step 8: test-set summary over 30 runs (RMSE in MPa)
+======================================================================
+Architecture Algorithm      Parameters     RMSE mean+-std       R2 mean+-std   Median     Best    Worst  Best epoch   Seconds
+A Reference  Mini-batch GD         111     5.735 +- 0.297     0.880 +- 0.012    5.742    5.042    6.392         535       1.7
+A Reference  BFGS                  111     5.463 +- 0.389     0.891 +- 0.015    5.443    4.653    6.236         442       0.5
+A Reference  Adam                  111     5.966 +- 0.333     0.870 +- 0.015    5.921    5.262    6.780         149       2.0
+B Wide       Mini-batch GD        1101     5.082 +- 0.189     0.906 +- 0.007    5.120    4.643    5.500         517       4.9
+B Wide       BFGS                 1101     5.108 +- 0.343     0.905 +- 0.013    5.075    4.625    6.250         210      20.6
+B Wide       Adam                 1101     5.035 +- 0.250     0.908 +- 0.009    5.027    4.617    5.517         170       5.4
+C Deep       Mini-batch GD        1101     5.455 +- 0.266     0.892 +- 0.011    5.428    4.897    6.099         643       8.0
+C Deep       BFGS                 1101     5.262 +- 0.508     0.899 +- 0.021    5.192    4.388    6.990         163      20.5
+C Deep       Adam                 1101     5.369 +- 0.296     0.895 +- 0.011    5.407    4.575    5.903         221       8.7
+
+Reference models (single fit, no repetitions):
+Model                              RMSE        MAE         R2
+Linear regression                 6.977      5.271      0.823
+
+Best epoch = median epoch-equivalent of the selected (lowest validation loss) parameters.
+Seconds = mean training time per run.
